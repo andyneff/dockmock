@@ -1,0 +1,5 @@
+[rpmdocker]
+name=rpmdocker
+baseurl=file:///opt/software/boost/rpm
+gpgcheck=0
+enabled=1
