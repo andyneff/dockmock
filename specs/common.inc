@@ -26,9 +26,9 @@ Prefix: /
 %define opencl_libflags    %(echo %{RPM_OPENCL_LIBRARY_FLAGS})
 #%%define tclconfig_dir      /usr/lib64
 
-%define _prefix          %(echo ${RPM_PREFIX_BASE-/})
+%define _prefix          %(echo ${RPM_PREFIX_BASE-/usr/local})
 #Prefix should not end in / except in the "/" case
-%define _exec_prefix     %(echo ${RPM_EXECPREFIX_BASE-%{prefix}})
+%define _exec_prefix     %(echo ${RPM_EXECPREFIX_BASE-%{_prefix}})
 
 %if "%{_prefix}" == "/"
   %define cat_prefix %{nil}
@@ -48,18 +48,16 @@ Prefix: /
   %define re_exec_prefix %{nil}
 %endif
 
-#%define install_dir      %(echo ${RPM_INSTALL_DIR-%{prefix}})
-
-%define _bindir          %(echo ${RPM_BINDIR_BASE-%{cat_prefix}/usr/local/bin})
-%define _datarootdir     %(echo ${RPM_DATADIR_BASE-%{cat_prefix}/usr/local/share})
+%define _bindir          %(echo ${RPM_BINDIR_BASE-%{cat_exec_prefix}/bin})
+%define _datarootdir     %(echo ${RPM_DATADIR_BASE-%{cat_prefix}/share})
 %define _datadir         %{_datarootdir}
-%define _includedir      %(echo ${RPM_INCLUDEDIR_BASE-%{cat_prefix}/usr/local/include})
-%define _libdir          %(echo ${RPM_LIBDIR_BASE-%{cat_prefix}/usr/local/lib64})
-%define _libexecdir      %(echo ${RPM_LIBEXECDIR_BASE-%{cat_prefix}/usr/local/libexec})
+%define _includedir      %(echo ${RPM_INCLUDEDIR_BASE-%{cat_prefix}/include})
+%define _libdir          %(echo ${RPM_LIBDIR_BASE-%{cat_prefix}/lib64})
+%define _libexecdir      %(echo ${RPM_LIBEXECDIR_BASE-%{cat_prefix}/libexec})
 %define _localstatedir   %(echo ${RPM_LOCALSTATEDIR_BASE-%{cat_prefix}/var})
-%define _sbindir         %(echo ${RPM_SBINDIR_BASE-%{cat_prefix}/usr/local/sbin})
-%define _sysconfdir      %(echo ${RPM_SYSCONFDIR_BASE-%{cat_prefix}/usr/local/etc})
-%define _sharedstatedir  %(echo ${RPM_SHAREDSTATEDIR_BASE-%{_datadir}/var/lib})
+%define _sbindir         %(echo ${RPM_SBINDIR_BASE-%{cat_prefix}/sbin})
+%define _sysconfdir      %(echo ${RPM_SYSCONFDIR_BASE-%{cat_prefix}/etc})
+%define _sharedstatedir  %(echo ${RPM_SHAREDSTATEDIR_BASE-%{cat_prefix}/var/lib})
 
 %define _docdir          %(echo ${RPM_DOCDIR_BASE-%{_datadir}/doc})
 %define _infodir         %(echo ${RPM_INFODIR_BASE-%{_datadir}/info})

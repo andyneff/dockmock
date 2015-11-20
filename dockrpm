@@ -5,12 +5,15 @@ CUR_DIR=$(dirname ${BASH_SOURCE[0]})
 if [ $# -ge 1 -a -f "$1" ]; then
   SPEC_NAME=$1
   shift
-elif (( $(ls *.spec | wc -l) == 1 )); then
-  SPEC_NAME=$(ls *.spec)
+elif [ $# -ge 1 -a -f "${CUR_DIR}/specs/$1.spec" ]; then
+  SPEC_NAME=${CUR_DIR}/specs/$1.spec
+  shift
 else
   echo "You need to specify a single spec file"
   exit 1
 fi
+
+set -eu
 
 : ${OTHER_OPTS=}
 : ${RUN_BASH=}
@@ -21,39 +24,59 @@ if [ $# -ge 1 ]; then
   shift
 fi
 
-set -eu
+mkdir -p ${CUR_DIR}/rpms ${CUR_DIR}/srpms
+
+if [ ! -f ${CUR_DIR}/rpms/repodata/repomd.xml ]; then
+  createrepo ${CUR_DIR}/rpms
+fi
+
+if [ ! -f ${CUR_DIR}/srpms/repodata/repomd.xml ]; then
+  createrepo ${CUR_DIR}/srpms
+fi
 
 : ${RUN_DEP_CHECK=0}
-#Disabled for now
+#Disabled by default, it's slow
 
 if (( ${RUN_DEP_CHECK} > 0 )); then
+  echo "Checking for local dependencies"
+  : ${DOCKER_RPM_DEP_CHECK_OPTIONS="-v /etc/yum.repos.d/:/repos:ro -v $(pwd)/rpms:$(pwd)/rpms"}
 
-  : ${DOCKER_RPM_DEP_CHECK_OPTIONS='-v /etc/yum.repos.d/:/repos:ro'}
-
-  DEP_CHECK=0
   #Dependency checking
   for package in $(cat $SPEC_NAME | docker run -i ${DOCKER_RPM_DEP_CHECK_OPTIONS} --rm andyneff/rpm_dep_check | grep '^Error: No Package found for ' | sed 's/^Error: No Package found for //'); do
-    echo "Missing $package"
+    echo "Searching for $package"
     DEP_CHECK=1
-  done
 
-  if [ ${DEP_CHECK} == 1 ]; then
-    echo "Dependency check failed. Need to implement recursive building"
+    for spec in $(ls ${CUR_DIR}/specs/*.spec); do
+      for rpm_name in $(rpm -q -D "_sourcedir ${CUR_DIR}/specs" --qf "%{NAME}\n" --specfile ${spec}); do
+                                   #set sourcedir for common.inc
+        if [ "${rpm_name}" == "${package}" ]; then
+          DEP_CHECK=0
+          break 2
+        fi
+      done
+    done
+    if [ "$DEP_CHECK" == "1" ]; then
+      echo "Cannot find ${package}"
+      exit 1
+    else
+      echo "Building missing ${package}"
+      echo ${CUR_DIR}/dockrpm ${spec}
+      ${CUR_DIR}/dockrpm ${spec}
+    fi
+
     #Everything in RUN_DEP_CHECK works EXCETPS this recursive part. Haven't architected it yet ;)
-  fi
+  done
 fi
 
 SPEC_BASENAME=$(basename ${SPEC_NAME})
 IMAGE_NAME=auto_rpm_builder_${SPEC_BASENAME%.*}
 DOCKERFILE_NAME=$(mktemp -p $(pwd)/specs)
 
-cat ${CUR_DIR}/Dockerfile | GID=$(id -g) ${CUR_DIR}/docker+.bsh > DOCKERFILE_NAME
+cat ${CUR_DIR}/Dockerfile | SPEC_BASENAME=${SPEC_BASENAME} USER_UID=$(id -u) USER_GID=$(id -g) ${CUR_DIR}/docker+.bsh > ${DOCKERFILE_NAME}
+set -xv
+docker build -f ${DOCKERFILE_NAME} -t ${IMAGE_NAME} specs
 
-exit 1
-
-docker build ${IMAGE_NAME} specs
-
-mkdir -p rpms srpms
+rm ${DOCKERFILE_NAME}
 
 #Auto clean up in case there was a mess left behind. Do not kill because that 
 #means that's it is running, which most likely means the user is confused ;)
