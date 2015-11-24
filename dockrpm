@@ -1,26 +1,66 @@
 #!/usr/bin/env bash
 
-CUR_DIR=$(dirname ${BASH_SOURCE[0]})
+set -eu
 
-if [ $# -ge 1 -a -f "$1" ]; then
-  SPEC_NAME=$1
-  shift
-elif [ $# -ge 1 -a -f "${CUR_DIR}/specs/$1.spec" ]; then
-  SPEC_NAME=${CUR_DIR}/specs/$1.spec
-  shift
+function version_number (){
+  local IFS=.
+  VERSION_NUMBER=($1)
+}
+
+CUR_DIR=$(cd $(dirname ${BASH_SOURCE[0]}); pwd)
+
+if [ "${DOCKRPM_FAKE=}" == "1" ]; then
+  if [ $# -ge 1 ]; then
+    SPEC_NAME=$1
+    if [ "${1##*.}" == "$1" ]; then #no extension
+      SPEC_NAME=${CUR_DIR}/specs/$1.spec
+    fi
+    if [ -f "${SPEC_NAME}" ]; then
+      echo "${SPEC_NAME} already exits, remove it or don't use DOCKRPM_FAKE=1"
+      exit 1
+    fi
+
+    FAKE_SPEC_NAME=$(basename ${SPEC_NAME})
+    FAKE_SPEC_NAME=${FAKE_SPEC_NAME%.*}
+    : ${DOCKRPM_FAKE_ARCH=}
+    : ${DOCKRPM_FAKE_VERSION=1.0.0}
+    echo "Name: ${FAKE_SPEC_NAME}" > ${SPEC_NAME}
+    echo "License: None" >> ${SPEC_NAME}
+    echo "Group: Misc" >> ${SPEC_NAME}
+    echo "Summary: Fake rpm" >> ${SPEC_NAME}
+    echo "Version: ${DOCKRPM_FAKE_VERSION}" >> ${SPEC_NAME}
+    echo "Release: 1%{?dist}" >> ${SPEC_NAME}
+    if [ "${DOCKRPM_FAKE_ARCH}" != "" ]; then
+      echo "BuildArch: ${DOCKRPM_FAKE_ARCH}" >> ${SPEC_NAME}
+    fi
+    echo "%description" >> ${SPEC_NAME}
+    echo "Fake Rpm" >> ${SPEC_NAME}
+    echo "%files" >> ${SPEC_NAME}
+  else
+    echo "You need to specify a single spec file"
+    exit 1
+  fi
+fi
+
+if [ $# -ge 1 ]; then
+  if [ -f "$1" ]; then
+    SPEC_NAME=$1
+    shift
+  elif [ -f "${CUR_DIR}/specs/$1.spec" ]; then
+    SPEC_NAME=${CUR_DIR}/specs/$1.spec
+    shift
+  else
+    echo "$1 not found. Did you spell it right or did you mean to use DOCKRPM_FAKE=1?"
+    exit 1
+  fi    
 else
   echo "You need to specify a single spec file"
   exit 1
 fi
 
-set -eu
-
-: ${OTHER_OPTS=}
 : ${RUN_BASH=}
 if [ $# -ge 1 ]; then
-  if (( $1 == 1 )); then
-    RUN_BASH=bash
-  fi
+  RUN_BASH=$1
   shift
 fi
 
@@ -34,21 +74,30 @@ if [ ! -f ${CUR_DIR}/srpms/repodata/repomd.xml ]; then
   createrepo ${CUR_DIR}/srpms
 fi
 
-: ${RUN_DEP_CHECK=0}
-#Disabled by default, it's slow
-
-if (( ${RUN_DEP_CHECK} > 0 )); then
+if [ "${RUN_DEP_CHECK=1}" == "1" ]; then
   echo "Checking for local dependencies"
-  : ${DOCKER_RPM_DEP_CHECK_OPTIONS="-v /etc/yum.repos.d/:/repos:ro -v $(pwd)/rpms:$(pwd)/rpms"}
+
+  if [ "${RUN_DEP_CHECK_DOCKER=0}" == "1" ]; then
+    : ${DOCKER_RPM_DEP_CHECK_OPTIONS="-v /etc/yum.repos.d/:/repos:ro -v ${CUR_DIR}/rpms:${CUR_DIR}/rpms"} #"
+    GET_PACKAGES_CMD='cat $SPEC_NAME | docker run -i ${DOCKER_RPM_DEP_CHECK_OPTIONS} --rm andyneff/rpm_dep_check'
+  else
+    mkdir -p ${CUR_DIR}/mock/rpmbuild/
+    if [ ! -d ${CUR_DIR}/mock/rpmbuild/SOURCES ]; then
+      ln -s ${CUR_DIR}/specs ${CUR_DIR}/mock/rpmbuild/SOURCES
+    fi
+    GET_PACKAGES_CMD="sudo HOME=${CUR_DIR}/mock yum-builddep --nogpgcheck --assumeno $SPEC_NAME"
+  fi
 
   #Dependency checking
-  for package in $(cat $SPEC_NAME | docker run -i ${DOCKER_RPM_DEP_CHECK_OPTIONS} --rm andyneff/rpm_dep_check | grep '^Error: No Package found for ' | sed 's/^Error: No Package found for //'); do
+  for package in $(${GET_PACKAGES_CMD} | grep '^Error: No Package found for ' | sed 's/^Error: No Package found for //'); do
     echo "Searching for $package"
     DEP_CHECK=1
+    PACKAGE_INFO=($package)
 
     for spec in $(ls ${CUR_DIR}/specs/*.spec); do
-      for rpm_name in $(rpm -q -D "_sourcedir ${CUR_DIR}/specs" --qf "%{NAME}\n" --specfile ${spec}); do
+      for rpm_info in $(rpm -q -D "_sourcedir ${CUR_DIR}/specs" --qf "%{NAME} %{VERSION}\n" --specfile ${spec}); do
                                    #set sourcedir for common.inc
+
         if [ "${rpm_name}" == "${package}" ]; then
           DEP_CHECK=0
           break 2
@@ -68,12 +117,99 @@ if (( ${RUN_DEP_CHECK} > 0 )); then
   done
 fi
 
+exit 1
+
 SPEC_BASENAME=$(basename ${SPEC_NAME})
 IMAGE_NAME=auto_rpm_builder_${SPEC_BASENAME%.*}
-DOCKERFILE_NAME=$(mktemp -p $(pwd)/specs)
+DOCKERFILE_NAME=$(mktemp -p ${CUR_DIR}/specs)
 
-cat ${CUR_DIR}/Dockerfile | SPEC_BASENAME=${SPEC_BASENAME} USER_UID=$(id -u) USER_GID=$(id -g) ${CUR_DIR}/docker+.bsh > ${DOCKERFILE_NAME}
-set -xv
+if grep ${SPEC_BASENAME} ${CUR_DIR}/specs/cuda; then
+  : ${NVIDIA_VERSION=$(nvidia-smi -q | grep "Driver Version" | awk '{print $4}')} #'
+
+  #Tested on Cuda 5.5-7.5, Seems good enough for me
+  if which nvcc > /dev/null 2>&1; then
+    : ${NVCC=$(which nvcc)}
+  else
+    : ${NVCC=/usr/local/cuda/bin/nvcc}
+    #Redhat/nvidia default location
+  fi
+  : ${CUDA_VERSION=$(${NVCC} --version | tail -n 1 | awk '{print $NF}' | sed 's/V\(.*\)/\1/')}
+  version_number ${CUDA_VERSION}
+  CUDA_VERSION_NUMBER=("${VERSION_NUMBER[@]}")
+  CUDA_VERSION=${CUDA_VERSION_NUMBER[0]}.${CUDA_VERSION_NUMBER[1]}
+
+  case "$CUDA_VERSION" in
+    "7.5" | "7.0") 
+      #http://developer.download.nvidia.com/compute/cuda/7.5/Prod/local_installers/cuda_7.5.18_linux.run 352.39
+      #http://developer.download.nvidia.com/compute/cuda/7_0/Prod/local_installers/cuda_7.0.28_linux.run
+      DOCKRPM_CUDA_INSTALL="RUN yum install -y http://developer.download.nvidia.com/compute/cuda/repos/rhel7/x86_64/cuda-repo-rhel7-7.5-18.x86_64.rpm && \
+                                yum install -y cuda-core-${CUDA_VERSION_NUMBER[0]}-${CUDA_VERSION_NUMBER[1]} && \
+                                ln -s /usr/local/cuda-${CUDA_VERSION} /usr/local/cuda"
+  #                              yum install -y cuda-toolkit-${CUDA_VERSION}.x86_64"
+      ;;
+    "6.5" | "6.0" | "5.5") 
+      #http://developer.download.nvidia.com/compute/cuda/6_5/rel/installers/cuda_6.5.14_linux_64.run
+      #http://developer.download.nvidia.com/compute/cuda/6_0/rel/installers/cuda_6.0.37_linux_64.run
+      #http://developer.download.nvidia.com/compute/cuda/5_5/rel/installers/cuda_5.5.22_linux_64.run 319.37
+      DOCKRPM_CUDA_INSTALL="RUN yum install -y http://developer.download.nvidia.com/compute/cuda/repos/rhel6/x86_64/cuda-repo-rhel6-7.5-18.x86_64.rpm && \
+                                yum install -y cuda-core-${CUDA_VERSION_NUMBER[0]}-${CUDA_VERSION_NUMBER[1]} && \
+                                ln -s /usr/local/cuda-${CUDA_VERSION} /usr/local/cuda"
+      ;;
+    *)
+      echo "Unsupported version of CUDA ${CUDA_VERSION}"
+      exit 1
+      ;;
+  esac
+  export DOCKRPM_CUDA_INSTALL
+
+#  elif [ "${CUDA_VERSION}" == "6.5" ]; then
+#    DOCKRPM_CUDA_INSTALL="RUN yum install -y http://developer.download.nvidia.com/compute/cuda/repos/rhel6/x86_64/cuda-repo-rhel6-7.5-18.x86_64.rpm && \
+#                              yum install -y cuda-toolkit-6.5.x86_64"
+#  elif [ "${CUDA_VERSION}" == "6.0" ]; then
+#   DOCKRPM_CUDA_INSTALL="RUN yum install -y http://developer.download.nvidia.com/compute/cuda/repos/rhel6/x86_64/cuda-repo-rhel6-7.5-18.x86_64.rpm && \
+#                              yum install -y cuda-toolkit-6.0.x86_64"
+#
+#  elif [ "${CUDA_VERSION}" == "5.5" ]; then
+#    #They broke the repo for 5.5, they removed most of the packages from the 
+#   
+#http://developer.download.nvidia.com/compute/cuda/repos/rhel6/x86_64/nvidia-kmod-319.37-1.el6.x86_64.rpm
+#http://developer.download.nvidia.com/compute/cuda/repos/rhel6/x86_64/nvidia-modprobe-319.37-1.el6.x86_64.rpm
+#http://developer.download.nvidia.com/compute/cuda/repos/rhel6/x86_64/nvidia-settings-319.37-30.el6.x86_64.rpm
+#http://developer.download.nvidia.com/compute/cuda/repos/rhel6/x86_64/nvidia-xconfig-319.37-27.el6.x86_64.rpm
+#http://developer.download.nvidia.com/compute/cuda/repos/rhel6/x86_64/xorg-x11-drv-nvidia-319.37-2.el6.x86_64.rpm
+#http://developer.download.nvidia.com/compute/cuda/repos/rhel6/x86_64/xorg-x11-drv-nvidia-devel-319.37-2.el6.x86_64.rpm
+#http://developer.download.nvidia.com/compute/cuda/repos/rhel6/x86_64/xorg-x11-drv-nvidia-libs-319.37-2.el6.x86_64.rpm
+#http://developer.download.nvidia.com/compute/cuda/repos/rhel6/x86_64/xorg-x11-drv-nvidia-devel-319.37-2.el6.i686.rpm
+#http://developer.download.nvidia.com/compute/cuda/repos/rhel6/x86_64/xorg-x11-drv-nvidia-libs-319.37-2.el6.i686.rpm
+#
+#
+    #This should work, untested
+    #DOCKRPM_CUDA_INSTALL="RUN curl -LO http://developer.download.nvidia.com/compute/cuda/5_5/rel/installers/cuda_5.5.22_linux_64.run && \
+    #                          yum install -y perl-Env
+    #                          sh cuda_5.5.22_linux_64.run -extract / && \
+    #                          /cuda-linux64-rel-5.5.22-16488124.run -noprompt && \
+    #                          rm -f /NVIDIA*.run /cuda*.run"
+#  else 
+#    echo "Unsupported version of CUDA ${CUDA_VERSION}"
+#    exit 1
+#  fi
+#  export DOCKRPM_CUDA_INSTALL
+fi
+
+if [ "${RUN_BASH}" == "1" ]; then
+  DOCKRPM_RUN='bash'
+else
+  DOCKRPM_RUN='rpmbuild -ba -D "dist .el7" /home/dev/rpmbuild/SPECS/* && \
+               createrepo ~/rpmbuild/RPMS && \
+               createrepo ~/rpmbuild/SRPMS'
+fi
+
+cat ${CUR_DIR}/Dockerfile | \
+  SPEC_BASENAME=${SPEC_BASENAME} \
+  USER_UID=$(id -u) USER_GID=$(id -g) \
+  DOCKRPM_RUN=${DOCKRPM_RUN} \
+    ${CUR_DIR}/docker+.bsh > ${DOCKERFILE_NAME}
+
 docker build -f ${DOCKERFILE_NAME} -t ${IMAGE_NAME} specs
 
 rm ${DOCKERFILE_NAME}
@@ -84,9 +220,17 @@ if docker inspect ${IMAGE_NAME}_build > /dev/null 2>&1; then
   docker rm ${IMAGE_NAME}_build
 fi
 
+OTHER_OPTS=
+if [ "${DOCKRPM_MOUNT_REPO=1}" == "1" ]; then
+  OTHER_OPTS+="-v /etc/yum.repos.d:/repos:ro "
+fi
+if [ "${DOCKRPM_MOUNT_GPG=1}" == "1" ]; then
+  OTHER_OPTS+="-v /etc/pki/rpm-gpg:/gpg:ro "
+fi
+
 docker run -it -v $(pwd)/rpms:/home/dev/rpmbuild/RPMS \
-               -v $(pwd)/srpms:/home/dev/rpmbuild/SRPMS \
-               --name ${IMAGE_NAME}_build "${@}" ${IMAGE_NAME} ${RUN_BASH}
+               -v $(pwd)/srpms:/home/dev/rpmbuild/SRPMS ${OTHER_OPTS} \
+               --name ${IMAGE_NAME}_build "${@}" ${IMAGE_NAME}
 
 if [ "$?" == "0" ]; then
   docker rm ${IMAGE_NAME}_build

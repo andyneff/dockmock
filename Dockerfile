@@ -5,6 +5,8 @@ RUN yum groupinstall -y "Development Tools"
 
 RUN yum install -y spectool yum-utils createrepo sudo
 
+[{DOCKRPM_CUDA_INSTALL}]
+
 RUN groupadd -g 1500 dev && \
     useradd -u 1500 -g 1500 dev && \
     echo "dev ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers && \
@@ -38,7 +40,19 @@ RUN groupmod -g [{USER_GID}] dev && \
 
 USER dev
 
-CMD sudo yum-builddep -y /home/dev/rpmbuild/SPECS/* && \
-    rpmbuild -ba -D "dist .el7" -D "_topdir /home/dev/rpmbuild/" /home/dev/rpmbuild/SPECS/* && \
-    createrepo ~/rpmbuild/RPMS && \
-    createrepo ~/rpmbuild/SRPMS
+#Only this first 7 lines should be moved above... In a split docker build step,
+#where I can actually run it, commit, and then build part 2 starting from there.
+#The trick will be Not re-running it if the previous sha and current line (sha?) 
+#match, just like real existing build steps. Probably find a away to store it 
+#in a label if I can
+CMD if [ -d '/repos' ]; then \
+      sudo cp -n /repos/* /etc/yum.repos.d/; \
+    fi && \
+    if [ -d '/gpg' ]; then \
+      sudo cp -n /gpg/* /etc/pki/rpm-gpg/; \
+    fi && \
+    sudo yum-builddep -y /home/dev/rpmbuild/SPECS/* && \
+    [{DOCKRPM_RUN}]
+#    rpmbuild -ba -D "dist .el7" /home/dev/rpmbuild/SPECS/* && \
+#    createrepo ~/rpmbuild/RPMS && \
+#    createrepo ~/rpmbuild/SRPMS
