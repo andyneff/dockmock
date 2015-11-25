@@ -1,6 +1,6 @@
 
 
-.PHONY: all install clean rpmdocker.repo
+.PHONY: all install clean rpmdocker.repo clean_repo
 
 all:
 
@@ -13,6 +13,9 @@ rpmdocker.repo:
 
 install: rpmdocker.repo
 	cp rpmdocker.repo /etc/yum.repos.d/
+
+clean_repo:
+	yum clean --disablerepo='*' --enablerepo=rpmdocker metadata
 
 clean:
 	rm -f specs/tmp.??????????

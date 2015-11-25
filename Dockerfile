@@ -1,5 +1,15 @@
 FROM centos:7
 
+#Docker+ Vars
+# SPEC_NAME - the filename of the spec file, NOT PATH. It should be in the root
+#             of the context
+# DOCKRPM_RUN - Default bash: Command to run when the docker starts, rpmbuild 
+#               to build, bash for interactive, etc...
+# USER_UID - Default 1500: User id the repo files will be owned
+# USER_GID - Default 1500: Group id the repo files will be owned by
+#
+# DOCKRPM_CUDA_INSTALL - Optional: Cuda install step
+
 #Make this a separate line because it's so common in many of my other dockers
 RUN yum groupinstall -y "Development Tools"
 
@@ -22,9 +32,11 @@ gpgcheck=0\nenabled=1\n' > /etc/yum.repos.d/rpmdocker.repo && \
 COPY common.inc /home/dev/rpmbuild/SOURCES/
 COPY [{SPEC_BASENAME}] /home/dev/rpmbuild/SPECS/
 
-#RUN yum-builddep -y /home/dev/rpmbuild/SPECS/*
+#SPECIAL -v /etc/yum.repos.d:/repos:ro
+#SPECIAL -v /etc/pki/rpm-gpg:/gpg:ro
+#RUN yum-builddep -y /home/dev/rpmbuild/SPECS/[{SPEC_BASENAME}]
 
-RUN for filename in $(ls /home/dev/rpmbuild/SPECS/*); do\
+RUN for filename in $(ls /home/dev/rpmbuild/SPECS/[{SPEC_BASENAME}]); do\
       grep -v %include $filename > /tmp/ihateperl.spec && \
       spectool -C /home/dev/rpmbuild/SOURCES/ -g -S /tmp/ihateperl.spec; \
     done && \
@@ -33,8 +45,8 @@ RUN for filename in $(ls /home/dev/rpmbuild/SPECS/*); do\
 #current method, it would be hard to support that, but still! > : | I bet it
 #_sourcedir wasn't overwritten, it might work.
 
-RUN groupmod -g [{USER_GID}] dev && \
-    usermod -u [{USER_UID}] dev && \
+RUN groupmod -g [{USER_GID:1500}] dev && \
+    usermod -u [{USER_UID:1500}] dev && \
     chown -R dev:dev /home/dev
 #d+ to specific #
 
@@ -51,8 +63,5 @@ CMD if [ -d '/repos' ]; then \
     if [ -d '/gpg' ]; then \
       sudo cp -n /gpg/* /etc/pki/rpm-gpg/; \
     fi && \
-    sudo yum-builddep -y /home/dev/rpmbuild/SPECS/* && \
-    [{DOCKRPM_RUN}]
-#    rpmbuild -ba -D "dist .el7" /home/dev/rpmbuild/SPECS/* && \
-#    createrepo ~/rpmbuild/RPMS && \
-#    createrepo ~/rpmbuild/SRPMS
+    sudo yum-builddep -y /home/dev/rpmbuild/SPECS/[{SPEC_BASENAME}] && \
+    [{DOCKRPM_RUN:bash}]

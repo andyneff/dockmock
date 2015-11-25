@@ -1,6 +1,15 @@
 #!/usr/bin/env bash
 
+function error_trap(){
+  echo "Entering debug bash session"
+  local temp_env=$(mktemp)
+  set | grep -Ev '^BASHOPTS|^BASH_COMPLETION_COMPAT_DIR|^BASH_REMATCH|^BASH_VERSINFO|^EUID|^PPID|^SHELLOPTS|^UID' > ${temp_env}
+  bash --rcfile ${temp_env} || :
+  rm -f ${temp_env}
+}
+
 set -eu
+#trap error_trap EXIT
 
 function version_number (){
   local IFS=.
@@ -64,7 +73,7 @@ if [ $# -ge 1 ]; then
   shift
 fi
 
-mkdir -p ${CUR_DIR}/rpms ${CUR_DIR}/srpms
+mkdir -p ${CUR_DIR}/rpms ${CUR_DIR}/srpms ${CUR_DIR}/sources
 
 if [ ! -f ${CUR_DIR}/rpms/repodata/repomd.xml ]; then
   createrepo ${CUR_DIR}/rpms
@@ -78,46 +87,28 @@ if [ "${RUN_DEP_CHECK=1}" == "1" ]; then
   echo "Checking for local dependencies"
 
   if [ "${RUN_DEP_CHECK_DOCKER=0}" == "1" ]; then
-    : ${DOCKER_RPM_DEP_CHECK_OPTIONS="-v /etc/yum.repos.d/:/repos:ro -v ${CUR_DIR}/rpms:${CUR_DIR}/rpms"} #"
-    GET_PACKAGES_CMD='cat $SPEC_NAME | docker run -i ${DOCKER_RPM_DEP_CHECK_OPTIONS} --rm andyneff/rpm_dep_check'
+    DOCKRPM_OPT='--docker_dep_check'
   else
-    mkdir -p ${CUR_DIR}/mock/rpmbuild/
-    if [ ! -d ${CUR_DIR}/mock/rpmbuild/SOURCES ]; then
-      ln -s ${CUR_DIR}/specs ${CUR_DIR}/mock/rpmbuild/SOURCES
-    fi
-    GET_PACKAGES_CMD="sudo HOME=${CUR_DIR}/mock yum-builddep --nogpgcheck --assumeno $SPEC_NAME"
+    DOCKRPM_OPT=
   fi
 
-  #Dependency checking
-  for package in $(${GET_PACKAGES_CMD} | grep '^Error: No Package found for ' | sed 's/^Error: No Package found for //'); do
-    echo "Searching for $package"
-    DEP_CHECK=1
-    PACKAGE_INFO=($package)
+  run_specs=()
 
-    for spec in $(ls ${CUR_DIR}/specs/*.spec); do
-      for rpm_info in $(rpm -q -D "_sourcedir ${CUR_DIR}/specs" --qf "%{NAME} %{VERSION}\n" --specfile ${spec}); do
-                                   #set sourcedir for common.inc
+  while IFS='' read -r line || [[ -n "$line" ]]; do
+    run_specs+=($line)
+  done < <(${CUR_DIR}/dockrpm.py ${SPEC_NAME} ${DOCKRPM_OPT})
+  #check for python script non-zero return? I CAN'T! Wait until 100% python, then I can :-\
 
-        if [ "${rpm_name}" == "${package}" ]; then
-          DEP_CHECK=0
-          break 2
-        fi
-      done
-    done
-    if [ "$DEP_CHECK" == "1" ]; then
-      echo "Cannot find ${package}"
-      exit 1
-    else
-      echo "Building missing ${package}"
-      echo ${CUR_DIR}/dockrpm ${spec}
-      ${CUR_DIR}/dockrpm ${spec}
+  for i in $(seq ${#run_specs[@]}); do
+    echo "Building local dependency ${run_specs[$i-1]}"
+    "${BASH_SOURCE[0]}" "${run_specs[$i-1]}" 0 "${@}"
+    if [ "${RUN_DEP_CHECK_DOCKER}" == "0" ]; then
+      sudo yum clean --disablerepo='*' --enablerepo=rpmdocker metadata
+      #Update the cache to include the new rpm. This is necessary to that the 
+      #NEXT time this is run, a dependency doesn't appear to be missing again
     fi
-
-    #Everything in RUN_DEP_CHECK works EXCETPS this recursive part. Haven't architected it yet ;)
   done
 fi
-
-exit 1
 
 SPEC_BASENAME=$(basename ${SPEC_NAME})
 IMAGE_NAME=auto_rpm_builder_${SPEC_BASENAME%.*}
@@ -162,44 +153,12 @@ if grep ${SPEC_BASENAME} ${CUR_DIR}/specs/cuda; then
   esac
   export DOCKRPM_CUDA_INSTALL
 
-#  elif [ "${CUDA_VERSION}" == "6.5" ]; then
-#    DOCKRPM_CUDA_INSTALL="RUN yum install -y http://developer.download.nvidia.com/compute/cuda/repos/rhel6/x86_64/cuda-repo-rhel6-7.5-18.x86_64.rpm && \
-#                              yum install -y cuda-toolkit-6.5.x86_64"
-#  elif [ "${CUDA_VERSION}" == "6.0" ]; then
-#   DOCKRPM_CUDA_INSTALL="RUN yum install -y http://developer.download.nvidia.com/compute/cuda/repos/rhel6/x86_64/cuda-repo-rhel6-7.5-18.x86_64.rpm && \
-#                              yum install -y cuda-toolkit-6.0.x86_64"
-#
-#  elif [ "${CUDA_VERSION}" == "5.5" ]; then
-#    #They broke the repo for 5.5, they removed most of the packages from the 
-#   
-#http://developer.download.nvidia.com/compute/cuda/repos/rhel6/x86_64/nvidia-kmod-319.37-1.el6.x86_64.rpm
-#http://developer.download.nvidia.com/compute/cuda/repos/rhel6/x86_64/nvidia-modprobe-319.37-1.el6.x86_64.rpm
-#http://developer.download.nvidia.com/compute/cuda/repos/rhel6/x86_64/nvidia-settings-319.37-30.el6.x86_64.rpm
-#http://developer.download.nvidia.com/compute/cuda/repos/rhel6/x86_64/nvidia-xconfig-319.37-27.el6.x86_64.rpm
-#http://developer.download.nvidia.com/compute/cuda/repos/rhel6/x86_64/xorg-x11-drv-nvidia-319.37-2.el6.x86_64.rpm
-#http://developer.download.nvidia.com/compute/cuda/repos/rhel6/x86_64/xorg-x11-drv-nvidia-devel-319.37-2.el6.x86_64.rpm
-#http://developer.download.nvidia.com/compute/cuda/repos/rhel6/x86_64/xorg-x11-drv-nvidia-libs-319.37-2.el6.x86_64.rpm
-#http://developer.download.nvidia.com/compute/cuda/repos/rhel6/x86_64/xorg-x11-drv-nvidia-devel-319.37-2.el6.i686.rpm
-#http://developer.download.nvidia.com/compute/cuda/repos/rhel6/x86_64/xorg-x11-drv-nvidia-libs-319.37-2.el6.i686.rpm
-#
-#
-    #This should work, untested
-    #DOCKRPM_CUDA_INSTALL="RUN curl -LO http://developer.download.nvidia.com/compute/cuda/5_5/rel/installers/cuda_5.5.22_linux_64.run && \
-    #                          yum install -y perl-Env
-    #                          sh cuda_5.5.22_linux_64.run -extract / && \
-    #                          /cuda-linux64-rel-5.5.22-16488124.run -noprompt && \
-    #                          rm -f /NVIDIA*.run /cuda*.run"
-#  else 
-#    echo "Unsupported version of CUDA ${CUDA_VERSION}"
-#    exit 1
-#  fi
-#  export DOCKRPM_CUDA_INSTALL
 fi
 
 if [ "${RUN_BASH}" == "1" ]; then
   DOCKRPM_RUN='bash'
 else
-  DOCKRPM_RUN='rpmbuild -ba -D "dist .el7" /home/dev/rpmbuild/SPECS/* && \
+  DOCKRPM_RUN='rpmbuild -ba -D "dist .el7" /home/dev/rpmbuild/SPECS/'"${SPEC_BASENAME}"' && \
                createrepo ~/rpmbuild/RPMS && \
                createrepo ~/rpmbuild/SRPMS'
 fi
@@ -229,7 +188,8 @@ if [ "${DOCKRPM_MOUNT_GPG=1}" == "1" ]; then
 fi
 
 docker run -it -v $(pwd)/rpms:/home/dev/rpmbuild/RPMS \
-               -v $(pwd)/srpms:/home/dev/rpmbuild/SRPMS ${OTHER_OPTS} \
+               -v $(pwd)/srpms:/home/dev/rpmbuild/SRPMS \
+               -v $(pwd)/sources:/home/dev/rpmbuild/SOURCES ${OTHER_OPTS} \
                --name ${IMAGE_NAME}_build "${@}" ${IMAGE_NAME}
 
 if [ "$?" == "0" ]; then
@@ -237,3 +197,5 @@ if [ "$?" == "0" ]; then
 else
   echo "Build failed. Try"
 fi
+
+trap - EXIT
