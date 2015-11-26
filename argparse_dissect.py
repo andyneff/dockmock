@@ -1,6 +1,8 @@
 import argparse
 from argparse import *
 
+import sys as _sys
+
 def custom_call(self, parser, namespace, values, option_string=None):
     if not '_ordered_args_names' in namespace:
       setattr(namespace, '_ordered_args_names', list())
@@ -73,9 +75,10 @@ class ArgumentParser(argparse.ArgumentParser):
 
 def filter_args(namespace, args=None, exclude=[]):
   if args is None:
-    args = sys.argv[1:]
+    args = _sys.argv[1:]
 
-  exclude = list(exclude)
+  if not isinstance(exclude, (list, tuple, set)):
+    exclude = [exclude]
 
   filtered_args = []
   #filtered_args2 = [] 
@@ -85,7 +88,7 @@ def filter_args(namespace, args=None, exclude=[]):
                                     namespace._ordered_args_option_strings,
                                     namespace._ordered_args_values):
     
-    if not isinstance(values, list):
+    if not isinstance(values, (list, tuple, set)):
       values = [values]
     #canonicalize
 

@@ -16,6 +16,7 @@ install: rpmdocker.repo
 
 clean_repo:
 	yum clean --disablerepo='*' --enablerepo=rpmdocker metadata
+	sudo yum clean --disablerepo='*' --enablerepo=rpmdocker metadata
 
 clean:
 	rm -f specs/tmp.??????????

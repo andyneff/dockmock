@@ -126,3 +126,5 @@ export LD_LIBRARY_PATH=%{install_dir}%{_libdir}${LD_LIBRARY_PATH:+ ${LD_LIBRARY_
  %define pyver %{nil}
 %endif
 
+%define _libdir          %(echo ${RPM_LIBDIR_BASE-%{cat_prefix}/lib64})
+%define _python_sitelib  %(echo ${RPM_PYTHON_SITEDIRBASE-%{_libdir}/python%{pyver}})

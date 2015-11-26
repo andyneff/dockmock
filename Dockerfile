@@ -29,17 +29,17 @@ gpgcheck=0\nenabled=1\n' > /etc/yum.repos.d/rpmdocker.repo && \
 
 #End of Common Docker image
 
-COPY common.inc /home/dev/rpmbuild/SOURCES/
+COPY source /home/dev/rpmbuild/SOURCES
+COPY repo /repos
+COPY gpg /gpg
 COPY [{SPEC_BASENAME}] /home/dev/rpmbuild/SPECS/
 
-#SPECIAL -v /etc/yum.repos.d:/repos:ro
-#SPECIAL -v /etc/pki/rpm-gpg:/gpg:ro
-#RUN yum-builddep -y /home/dev/rpmbuild/SPECS/[{SPEC_BASENAME}]
+RUN cp -n /repos/* /etc/yum.repos.d/ \
+    cp -n /gpg/* /etc/pki/rpm-gpg/ \
+    yum-builddep -y /home/dev/rpmbuild/SPECS/[{SPEC_BASENAME}]
 
-RUN for filename in $(ls /home/dev/rpmbuild/SPECS/[{SPEC_BASENAME}]); do\
-      grep -v %include $filename > /tmp/ihateperl.spec && \
-      spectool -C /home/dev/rpmbuild/SOURCES/ -g -S /tmp/ihateperl.spec; \
-    done && \
+RUN grep -v %include /home/dev/rpmbuild/SPECS/[{SPEC_BASENAME}] > /tmp/ihateperl.spec && \
+    spectool -C /home/dev/rpmbuild/SOURCES/ -g -S /tmp/ihateperl.spec; \
     rm /tmp/ihateperl.spec
 #Thank you stupid perl script for not supporting %include... granted, given its
 #current method, it would be hard to support that, but still! > : | I bet it

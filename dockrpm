@@ -134,8 +134,13 @@ if grep ${SPEC_BASENAME} ${CUR_DIR}/specs/cuda; then
       #http://developer.download.nvidia.com/compute/cuda/7.5/Prod/local_installers/cuda_7.5.18_linux.run 352.39
       #http://developer.download.nvidia.com/compute/cuda/7_0/Prod/local_installers/cuda_7.0.28_linux.run
       DOCKRPM_CUDA_INSTALL="RUN yum install -y http://developer.download.nvidia.com/compute/cuda/repos/rhel7/x86_64/cuda-repo-rhel7-7.5-18.x86_64.rpm && \
-                                yum install -y cuda-core-${CUDA_VERSION_NUMBER[0]}-${CUDA_VERSION_NUMBER[1]} && \
-                                ln -s /usr/local/cuda-${CUDA_VERSION} /usr/local/cuda"
+                                yum install -y cuda-${CUDA_VERSION_NUMBER[0]}-${CUDA_VERSION_NUMBER[1]}"
+
+#      DOCKRPM_CUDA_INSTALL="RUN yum install -y http://developer.download.nvidia.com/compute/cuda/repos/rhel7/x86_64/cuda-repo-rhel7-7.5-18.x86_64.rpm && \
+#                                yum install -y cuda-core-${CUDA_VERSION_NUMBER[0]}-${CUDA_VERSION_NUMBER[1]} \
+#                                               cuda-cudart-${CUDA_VERSION_NUMBER[0]}-${CUDA_VERSION_NUMBER[1]} \
+#                                               cuda-cudart-dev-${CUDA_VERSION_NUMBER[0]}-${CUDA_VERSION_NUMBER[1]} && \
+#                                ln -s /usr/local/cuda-${CUDA_VERSION} /usr/local/cuda"
   #                              yum install -y cuda-toolkit-${CUDA_VERSION}.x86_64"
       ;;
     "6.5" | "6.0" | "5.5") 
@@ -143,7 +148,9 @@ if grep ${SPEC_BASENAME} ${CUR_DIR}/specs/cuda; then
       #http://developer.download.nvidia.com/compute/cuda/6_0/rel/installers/cuda_6.0.37_linux_64.run
       #http://developer.download.nvidia.com/compute/cuda/5_5/rel/installers/cuda_5.5.22_linux_64.run 319.37
       DOCKRPM_CUDA_INSTALL="RUN yum install -y http://developer.download.nvidia.com/compute/cuda/repos/rhel6/x86_64/cuda-repo-rhel6-7.5-18.x86_64.rpm && \
-                                yum install -y cuda-core-${CUDA_VERSION_NUMBER[0]}-${CUDA_VERSION_NUMBER[1]} && \
+                                yum install -y cuda-core-${CUDA_VERSION_NUMBER[0]}-${CUDA_VERSION_NUMBER[1]} \
+                                               cuda-cudart-${CUDA_VERSION_NUMBER[0]}-${CUDA_VERSION_NUMBER[1]} \
+                                               cuda-cudart-dev-${CUDA_VERSION_NUMBER[0]}-${CUDA_VERSION_NUMBER[1]}&& \
                                 ln -s /usr/local/cuda-${CUDA_VERSION} /usr/local/cuda"
       ;;
     *)
