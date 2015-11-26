@@ -19,6 +19,5 @@ clean_repo:
 	sudo yum clean --disablerepo='*' --enablerepo=rpmdocker metadata
 
 clean:
-	rm -f specs/tmp.??????????
-	if [ -d mock ]; then rm -f mock/rpmbuild/SOURCES; rmdir mock/rpmbuild mock; fi
+	rm -f specs/tmp??????
 	rm rpmdocker.repo

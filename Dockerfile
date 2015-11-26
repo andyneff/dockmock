@@ -30,12 +30,13 @@ gpgcheck=0\nenabled=1\n' > /etc/yum.repos.d/rpmdocker.repo && \
 #End of Common Docker image
 
 COPY source /home/dev/rpmbuild/SOURCES
-COPY repo /repos
+COPY repos /repos
 COPY gpg /gpg
 COPY [{SPEC_BASENAME}] /home/dev/rpmbuild/SPECS/
 
-RUN cp -n /repos/* /etc/yum.repos.d/ \
-    cp -n /gpg/* /etc/pki/rpm-gpg/ \
+RUN cp -n /repos/* /etc/yum.repos.d/ && \
+    cp -n /gpg/* /etc/pki/rpm-gpg/ && \
+    yum clean --disablerepo=* --enablerepo=rpmdocker metadata && \
     yum-builddep -y /home/dev/rpmbuild/SPECS/[{SPEC_BASENAME}]
 
 RUN grep -v %include /home/dev/rpmbuild/SPECS/[{SPEC_BASENAME}] > /tmp/ihateperl.spec && \
@@ -52,16 +53,4 @@ RUN groupmod -g [{USER_GID:1500}] dev && \
 
 USER dev
 
-#Only this first 7 lines should be moved above... In a split docker build step,
-#where I can actually run it, commit, and then build part 2 starting from there.
-#The trick will be Not re-running it if the previous sha and current line (sha?) 
-#match, just like real existing build steps. Probably find a away to store it 
-#in a label if I can
-CMD if [ -d '/repos' ]; then \
-      sudo cp -n /repos/* /etc/yum.repos.d/; \
-    fi && \
-    if [ -d '/gpg' ]; then \
-      sudo cp -n /gpg/* /etc/pki/rpm-gpg/; \
-    fi && \
-    sudo yum-builddep -y /home/dev/rpmbuild/SPECS/[{SPEC_BASENAME}] && \
-    [{DOCKRPM_RUN:bash}]
+CMD [{DOCKRPM_RUN:bash}]
