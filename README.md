@@ -29,3 +29,16 @@ RUN_DEP_CHECK_DOCKER - Run Dependency check in Docker or Locally on host
 
 /repos
 /gpg
+
+## Writing RPMs ##
+
+```spec
+%include %{_sourcedir}/common.inc
+Source999: common.inc
+
+%define real_name my_software
+
+Name: %{real_name}_l
+```
+
+This also means when 

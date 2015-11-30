@@ -35,9 +35,10 @@ COPY gpg /gpg
 COPY [{SPEC_BASENAME}] /home/dev/rpmbuild/SPECS/
 
 RUN cp -n /repos/* /etc/yum.repos.d/ && \
-    cp -n /gpg/* /etc/pki/rpm-gpg/ && \
-    yum clean --disablerepo=* --enablerepo=rpmdocker metadata && \
-    yum-builddep -y /home/dev/rpmbuild/SPECS/[{SPEC_BASENAME}]
+    cp -n /gpg/* /etc/pki/rpm-gpg/ 
+    #&& \
+    #yum clean --disablerepo=* --enablerepo=rpmdocker metadata && \
+    #yum-builddep -y /home/dev/rpmbuild/SPECS/[{SPEC_BASENAME}]
 
 RUN grep -v %include /home/dev/rpmbuild/SPECS/[{SPEC_BASENAME}] > /tmp/ihateperl.spec && \
     spectool -C /home/dev/rpmbuild/SOURCES/ -g -S /tmp/ihateperl.spec; \
@@ -53,4 +54,6 @@ RUN groupmod -g [{USER_GID:1500}] dev && \
 
 USER dev
 
-CMD [{DOCKRPM_RUN:bash}]
+CMD sudo yum clean --disablerepo=* --enablerepo=rpmdocker metadata && \
+    sudo yum-builddep -y /home/dev/rpmbuild/SPECS/[{SPEC_BASENAME}] && \
+    [{DOCKRPM_RUN:bash}]
