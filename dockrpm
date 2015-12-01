@@ -82,6 +82,7 @@ def parser():
      help='''Commit and enter a container when the rpmbuild step fails. Default
      is to be prompted to enter''')
   aa('--quiet', default=False, type='bool', const=True, nargs='?')
+  aa('--skip_build', default=False, type='bool', const=True, nargs='?')
 
   return my_parser
 
@@ -118,7 +119,7 @@ class DockRpm(object):
     self.common_inc = os.path.join(self.root_dir, 'common.inc')
     #Should this be args.root_dir or code_dir??? I'm not sure yet
     
-    self.dockerfile = os.path.join(self.spec_dir, 'Dockerfile')
+    self.dockerfile = os.path.join(self.spec_dir, 'Dockerfile_build')
     self.dockerfile_dep_check = os.path.join(self.spec_dir, 
                                              'Dockerfile_dep_check')
     
@@ -136,10 +137,12 @@ class DockRpm(object):
     return map(lambda x:x.split('\t'), stdout.split('\n'))
 
   def search_local(self, package_info):
+    local_pacakge_name = package_info[0].split('-', 1)
+    local_pacakge_name = local_pacakge_name[0]+'_local-'+local_pacakge_name[1]
     for spec in glob(os.path.join(self.root_dir, '*', '*.spec')):
       rpm_names = self.get_rpm_names_from_specfile(spec)
       for rpm_name in rpm_names:
-        if package_info[0] == rpm_name[0]:
+        if package_info[0] == rpm_name[0] or local_pacakge_name == rpm_name[0]:
           if len(package_info)==1:
             return spec
           elif len(package_info)==3:
@@ -256,12 +259,12 @@ class DockRpm(object):
     image_name = 'dockrpm_%s_dep_check' % self.spec_name
 
     ### Build Dep Check image
-    
-    print 'Building dependency checking docker'
-    cmd = ['docker', 'build', '-t', image_name, 
-           '--quiet=true' if self.args.quiet else '--quiet=false',
-           '-f', self.dockerfile_dep_check, self.spec_dir]
-    Popen(cmd).wait(0)
+    if not self.args.skip_build:
+      print 'Building dependency checking docker'
+      cmd = ['docker', 'build', '-t', image_name, 
+             '--quiet=true' if self.args.quiet else '--quiet=false',
+             '-f', self.dockerfile_dep_check, self.spec_dir]
+      Popen(cmd).wait(0)
     
     ### Run Dep Check
     print 'Checking dependencies for %s' % self.spec_path
@@ -366,11 +369,13 @@ class DockRpm(object):
       docker_options += ['-v', '%s:/repos:ro' % self.args.mount_repo]
     if self.args.mount_gpg:
       docker_options += ['-v', '%s:/gpg:ro' % self.args.mount_gpg]
+    if self.args.skip_build:
+      docker_options += ['-v', '%s:/home/dev/rpmbuild/SPECS/%s:ro' % (self.spec_path, self.spec_basename)]
 
     pid = Popen(['docker', 'run', '-it', 
                  '-v', '%s:/home/dev/rpmbuild/RPMS' % self.rpm_dir,
                  '-v', '%s:/home/dev/rpmbuild/SRPMS' % self.srpm_dir,
-                 '--name', container_name] + self.extra_args + [image_name])
+                 '--name', container_name] + docker_options + self.extra_args + [image_name])
     if pid.wait()==0:
       Popen(['docker', 'rm', container_name]).wait(0)
     else:
@@ -386,6 +391,7 @@ class DockRpm(object):
         Popen(['docker', 'run', '-it', 
                '-v', '%s:/home/dev/rpmbuild/RPMS' % self.rpm_dir,
                '-v', '%s:/home/dev/rpmbuild/SRPMS' % self.srpm_dir,
+               '-v', '%s:/home/dev/rpmbuild/SPECS/%s' % (self.spec_path, self.spec_basename),
                '--rm', container_name+'_debug', 'bash']).wait(0)
       raise Exception('Build failed, try commiting %s and running it to debug' % container_name)
 
@@ -400,7 +406,8 @@ class DockRpm(object):
     if self.args.dep_check:
       self.check_dependencies()
 
-    self.build_docker_image(image_name)
+    if not self.args.skip_build:
+      self.build_docker_image(image_name)
 
     self.run_docker_image(image_name, container_name)
 

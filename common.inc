@@ -128,3 +128,10 @@ export LD_LIBRARY_PATH=%{install_dir}%{_libdir}${LD_LIBRARY_PATH:+ ${LD_LIBRARY_
 
 %define _libdir          %(echo ${RPM_LIBDIR_BASE-%{cat_prefix}/lib64})
 %define _python_sitelib  %(echo ${RPM_PYTHON_SITEDIRBASE-%{_libdir}/python%{pyver}})
+
+# CUDA Specific stuff
+
+%define cuda_rootdir         %(echo ${RPM_CUDA_ROOTDIR_BASE-/usr/local/cuda})
+%define cuda_bindir          %(echo ${RPM_CUDA_BINDIR_BASE-%{cuda_rootdir}/bin})
+%define cuda_includedir      %(echo ${RPM_CUDA_INCLUDEDIR_BASE-%{cuda_rootdir}/include})
+%define cuda_libdir          %(echo ${RPM_CUDA_LIBDIR_BASE-%{cuda_rootdir}/lib64})
