@@ -1,0 +1,19 @@
+FROM centos:7
+
+RUN yum install -y yum-utils
+
+COPY repos /repos
+COPY gpg /gpg
+COPY source /root/rpmbuild/SOURCES
+
+RUN printf '[rpmdocker]\nname=rpmdocker\nbaseurl=file:///home/dev/rpmbuild/RPMS\n\
+gpgcheck=0\nenabled=1\n' > /etc/yum.repos.d/rpmdocker.repo && \
+    cp -n /repos/* /etc/yum.repos.d/ && \
+    cp -n /gpg/* /etc/pki/rpm-gpg/ 
+
+RUN yum makecache -y --disablerepo=rpmdocker && : [{CLEAR_CACHE:0}]
+#My hope is this makes using this docker quicker. This image should be purged 
+#from docker's image repoistory periodically to keep the cache up to day, every
+#x days???
+
+CMD cat - > /dev/shm/rpm.spec && yum-builddep --nogpgcheck --assumeno /dev/shm/rpm.spec

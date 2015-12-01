@@ -71,7 +71,7 @@ def parser():
      help='Skip dependency checking')
   aa('--docker_dep_check', default=False, action='store_true',
      help='Check dependencies in a docker. Slower, but does not require sudo')
-  aa('--root_dir', default=os.getcwd(), help='Change root dir')
+  aa('--root_dir', default=None, help='Change root dir')
   aa('--mount_repo', default='/etc/yum.repos.d', help='emptystring to disable')
   aa('--mount_gpg', default='/etc/pki/rpm-gpg', help='empty string to disable')
   aa('--bash', default=False, action='store_true', 
@@ -100,9 +100,15 @@ class DockRpm(object):
     
     (self.args, self.extra_args) = self.parser.parse_known_args(args)
 
-    self.root_dir = os.path.abspath(self.args.root_dir)
+    self.code_dir = os.path.dirname(__file__)
+    if self.args.root_dir:
+      self.root_dir = os.path.abspath(self.args.root_dir)
+    else:
+      self.root_dir = self.code_dir
 
     # Determine path info
+    self.specs_dir = os.path.join(self.root_dir, self.SPEC_DIR)
+
     self.spec_path = self.spec_path_from_arg(self.args.spec)
     self.spec_dir = os.path.dirname(self.spec_path)
     self.spec_basename = os.path.basename(self.spec_path)
@@ -113,9 +119,7 @@ class DockRpm(object):
     self.source_dir = os.path.join(self.spec_dir, self.SOURCE_DIR)
     self.repo_dir = os.path.join(self.spec_dir, self.REPO_DIR)
     self.gpg_dir = os.path.join(self.spec_dir, self.GPG_DIR)
-
-    self.code_dir = os.path.dirname(__file__)
-    
+   
     self.common_inc = os.path.join(self.root_dir, 'common.inc')
     #Should this be args.root_dir or code_dir??? I'm not sure yet
     
@@ -170,9 +174,9 @@ class DockRpm(object):
           spec_name = os.path.abspath(arg)
     else: #just name
       if os.path.splitext(arg)[1]==os.path.extsep+'spec': #has extension
-        spec_name = os.path.join(self.root_dir, arg)
+        spec_name = os.path.join(self.specs_dir, os.path.splitext(arg)[0], arg)
       else: #no extension
-        spec_name = os.path.join(self.root_dir, arg, 
+        spec_name = os.path.join(self.specs_dir, arg, 
                                  os.path.extsep.join((arg, 'spec')))
 
     if not self.args.fake:
@@ -309,7 +313,7 @@ class DockRpm(object):
     print 'Building docker image for %s' % self.spec_path
     docker_env = dict(os.environ)
 
-    with open(os.path.join(self.args.root_dir, 'cuda'), 'r') as fid:
+    with open(os.path.join(self.specs_dir, 'cuda'), 'r') as fid:
       if filter(lambda x:self.spec_basename in x, fid.readlines()):
         if self.args.cuda_version is None:
           pid = Popen([self.args.nvcc, '--version'], stdout=PIPE)
@@ -349,7 +353,22 @@ class DockRpm(object):
     #docker+ the Dockerfile
     self.dockerp(os.path.join(self.code_dir, 'Dockerfile'), self.dockerfile,
                  docker_env)
-    
+
+    #Create curl.bsh file
+    with open(self.spec_path, 'r') as fid:
+      spec_lines = fid.readlines()
+    spec_lines = filter(lambda x: not x.startswith('%include'), spec_lines)
+
+    pid = Popen(['spectool', '-g', '-n', '-A', '-'], stdin=PIPE, stdout=PIPE)
+    curl_lines = pid.communicate(''.join(spec_lines))[0]
+    curl_lines = curl_lines.split('\n')
+    curl_lines = filter(lambda x:x.startswith('dry run: '), curl_lines)
+    curl_lines = map(lambda x:x[len('dry run: '):], curl_lines)
+    pid.wait(0)
+    with open(os.path.join(self.spec_dir, 'curl.bsh'), 'w') as fid:
+      fid.write('\n'.join(curl_lines))
+    os.chmod(0755, os.path.join(self.spec_dir, 'curl.bsh'))
+
     Popen(['docker', 'build', '-f', self.dockerfile, '-t', image_name, 
            '--quiet=true' if self.args.quiet else '--quiet=false',
            self.spec_dir]).wait(0)

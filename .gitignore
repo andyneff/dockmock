@@ -1,3 +1,4 @@
 rpms
 srpms
 *.pyc
+rpmdocker.repo

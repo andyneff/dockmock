@@ -44,7 +44,7 @@ RUN grep -v %include /home/dev/rpmbuild/SPECS/[{SPEC_BASENAME}] > /tmp/ihateperl
     spectool -C /home/dev/rpmbuild/SOURCES/ -g -S /tmp/ihateperl.spec; \
     rm /tmp/ihateperl.spec
 #Thank you stupid perl script for not supporting %include... granted, given its
-#current method, it would be hard to support that, but still! > : | I bet it
+#current method, it would be hard to support that, but still! > : | I bet if
 #_sourcedir wasn't overwritten, it might work.
 
 RUN groupmod -g [{USER_GID:1500}] dev && \
