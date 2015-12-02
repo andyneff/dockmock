@@ -1,19 +1,28 @@
 FROM centos:7
 
-RUN yum install -y yum-utils
+RUN yum install -y yum-utils rpmdevtools
+
+RUN mkdir -p $HOME/rpmbuild/{RPMS,SRPMS,SOURCES,SPECS}
 
 COPY repos /repos
 COPY gpg /gpg
-COPY source /root/rpmbuild/SOURCES
 
-RUN printf '[rpmdocker]\nname=rpmdocker\nbaseurl=file:///home/dev/rpmbuild/RPMS\n\
-gpgcheck=0\nenabled=1\n' > /etc/yum.repos.d/rpmdocker.repo && \
+RUN printf '[rpmdocker]\nname=rpmdocker\nbaseurl=file:///home/dev/rpmbuild/RPMS\ngpgcheck=0\nenabled=1\n' > \
+           /etc/yum.repos.d/rpmdocker.repo && \
     cp -n /repos/* /etc/yum.repos.d/ && \
     cp -n /gpg/* /etc/pki/rpm-gpg/ 
 
 RUN yum makecache -y --disablerepo=rpmdocker && : [{CLEAR_CACHE:0}]
 #My hope is this makes using this docker quicker. This image should be purged 
-#from docker's image repoistory periodically to keep the cache up to day, every
+#from docker's image repository periodically to keep the cache up to day, every
 #x days???
 
-CMD cat - > /dev/shm/rpm.spec && yum-builddep --nogpgcheck --assumeno /dev/shm/rpm.spec
+#CMD cat - > /dev/shm/rpm.spec && yum-builddep --nogpgcheck --assumeno /dev/shm/rpm.spec
+
+COPY source /root/rpmbuild/SOURCES
+
+CMD read rpmbuild_args && cat - > $HOME/rpmbuild/SPECS/rpm.spec && \
+    truncate -s 20 /dev/shm/null $(grep -v '^%include' $HOME/rpmbuild/SPECS/rpm.spec | \
+                     spectool -g -n -A -C $HOME/rpmbuild/SOURCES - | \
+                     grep '^Getting' | sed 's/.* to \(.*\)/\1/') && \
+    yum-builddep --nogpgcheck --assumeno $(rpmbuild -bs ${rpmbuild_args} $HOME/rpmbuild/SPECS/rpm.spec | \grep "^Wrote: " | sed 's/Wrote: \(.*\)/\1/')

@@ -20,6 +20,7 @@ class Popen(Popen_orig):
       self.cmd=args[0]
     else:
       self.cmd=kwargs['args']
+    #print self.cmd
     super(Popen, self).__init__(*args, **kwargs)
 
   def wait(self, desired_rv=None):
@@ -57,6 +58,12 @@ def test_version(version1, version2, test):
   else:
     raise Exception('Unexpected logic test %s' % test)
 
+def dependencies_from_yum_builddep(output):
+  dependencies = filter(lambda x: x.startswith(' --> '), output.splitlines())
+  dependencies = map(lambda x: x.split()[-1], dependencies)
+  dependencies.sort()
+  return dependencies
+
 def parser():
   my_parser = argparse.ArgumentParser()
   aa = my_parser.add_argument
@@ -70,7 +77,8 @@ def parser():
   aa('--dep_check', default=True, type='bool',
      help='Skip dependency checking')
   aa('--docker_dep_check', default=False, action='store_true',
-     help='Check dependencies in a docker. Slower, but does not require sudo')
+     help='''Check dependencies in a docker. Necessary to be run at least once 
+             to create deps.txt, unless you create it manually''')
   aa('--root_dir', default=None, help='Change root dir')
   aa('--mount_repo', default='/etc/yum.repos.d', help='emptystring to disable')
   aa('--mount_gpg', default='/etc/pki/rpm-gpg', help='empty string to disable')
@@ -83,6 +91,10 @@ def parser():
      is to be prompted to enter''')
   aa('--quiet', default=False, type='bool', const=True, nargs='?')
   aa('--skip_build', default=False, type='bool', const=True, nargs='?')
+  aa('--with', default=[], action='append', 
+     help='Args for rpmbuild, not sent to recursive builds')
+  aa('--without', default=[], action='append',
+     help='Args for rpmbuild, not sent to recursive builds')
 
   return my_parser
 
@@ -100,7 +112,12 @@ class DockRpm(object):
     
     (self.args, self.extra_args) = self.parser.parse_known_args(args)
 
-    self.code_dir = os.path.dirname(__file__)
+    self.rpmbuild_args = [entry for value in self.args.without 
+                                for entry in ['--without', value]] + \
+                         [entry for value in getattr(self.args, 'with')
+                                for entry in ['--with', value]]
+
+    self.code_dir = os.path.abspath(os.path.dirname(__file__))
     if self.args.root_dir:
       self.root_dir = os.path.abspath(self.args.root_dir)
     else:
@@ -110,17 +127,17 @@ class DockRpm(object):
     self.specs_dir = os.path.join(self.root_dir, self.SPEC_DIR)
 
     self.spec_path = self.spec_path_from_arg(self.args.spec)
-    self.spec_dir = os.path.dirname(self.spec_path)
+    self.spec_dir = os.path.abspath(os.path.dirname(self.spec_path))
     self.spec_basename = os.path.basename(self.spec_path)
     self.spec_name = os.path.splitext(self.spec_basename)[0]
 
-    self.rpm_dir = os.path.join(self.root_dir, self.RPM_DIR)
-    self.srpm_dir = os.path.join(self.root_dir, self.SRPM_DIR)
-    self.source_dir = os.path.join(self.spec_dir, self.SOURCE_DIR)
-    self.repo_dir = os.path.join(self.spec_dir, self.REPO_DIR)
-    self.gpg_dir = os.path.join(self.spec_dir, self.GPG_DIR)
+    self.rpm_dir = os.path.abspath(os.path.join(self.root_dir, self.RPM_DIR))
+    self.srpm_dir = os.path.abspath(os.path.join(self.root_dir, self.SRPM_DIR))
+    self.source_dir = os.path.abspath(os.path.join(self.spec_dir, self.SOURCE_DIR))
+    self.repo_dir = os.path.abspath(os.path.join(self.spec_dir, self.REPO_DIR))
+    self.gpg_dir = os.path.abspath(os.path.join(self.spec_dir, self.GPG_DIR))
    
-    self.common_inc = os.path.join(self.root_dir, 'common.inc')
+    self.common_inc = os.path.join(self.specs_dir, 'common.inc')
     #Should this be args.root_dir or code_dir??? I'm not sure yet
     
     self.dockerfile = os.path.join(self.spec_dir, 'Dockerfile_build')
@@ -138,12 +155,15 @@ class DockRpm(object):
     pid = Popen(cmd, stdout=PIPE)
     stdout = pid.communicate()[0][:-1] #get rid of trailing newline
     pid.wait(0)
-    return map(lambda x:x.split('\t'), stdout.split('\n'))
+    return map(lambda x:x.split('\t'), stdout.splitlines())
 
   def search_local(self, package_info):
     local_pacakge_name = package_info[0].split('-', 1)
-    local_pacakge_name = local_pacakge_name[0]+'_local-'+local_pacakge_name[1]
-    for spec in glob(os.path.join(self.root_dir, '*', '*.spec')):
+    if len(local_pacakge_name)==1:
+      local_pacakge_name = local_pacakge_name[0]+'_local'
+    else:
+      local_pacakge_name = local_pacakge_name[0]+'_local-'+local_pacakge_name[1]
+    for spec in glob(os.path.join(self.specs_dir, '*', '*.spec')):
       rpm_names = self.get_rpm_names_from_specfile(spec)
       for rpm_name in rpm_names:
         if package_info[0] == rpm_name[0] or local_pacakge_name == rpm_name[0]:
@@ -245,7 +265,7 @@ class DockRpm(object):
 
     if os.path.exists(self.common_inc):
       shutil.copy(self.common_inc, self.source_dir)
-      #this this always overwrite? or never? or something inbetween?
+      #should this always overwrite? or never? or something inbetween?
     
     self.dockerp(os.path.join(self.code_dir, 'Dockerfile_dep_check'),
                  self.dockerfile_dep_check,
@@ -283,15 +303,21 @@ class DockRpm(object):
            '-v', '%s:/home/dev/rpmbuild/SRPMS' % self.srpm_dir,
            image_name]
     pid = Popen(cmd, stdin=PIPE, stdout=PIPE)
+    spec_lines = [' '.join(self.rpmbuild_args)+'\n'] + spec_lines
+    #inject the --with/without/etc... options into the docker as the first line of stdin
+
     stdout = pid.communicate(''.join(spec_lines))[0]
     pid.wait() #It is non-zero when packages are missing
     
-    print stdout
+    dependencies = dependencies_from_yum_builddep(stdout)
+    dependencies.sort()
+    with  open(os.path.join(self.spec_dir, 'deps.txt'), 'w') as fid:
+      fid.write('\n'.join(dependencies))
 
     ###Scan for missing packages
     missing_packages = []
     error_message = 'Error: No Package found for '
-    for line in stdout.split('\n'):
+    for line in stdout.splitlines():
       if line.startswith(error_message):
         missing_packages.append(line[len(error_message):])
         
@@ -304,11 +330,12 @@ class DockRpm(object):
         print 'Building local dependency %s' % missing_package
         #remove the spec name from the arg list and add the dependency to the 
         #arg list instead
-        dep_args = [match] + argparse.filter_args(self.args, None, 'spec') 
+        dep_args = [match] + argparse.filter_args(self.args, None, 
+                                                  ['spec', 'with', 'without'])
         DockRpm(dep_args).main()
       else:
         raise Exception('No match for package %s' % missing_package)
-  
+
   def build_docker_image(self, image_name):
     print 'Building docker image for %s' % self.spec_path
     docker_env = dict(os.environ)
@@ -349,6 +376,7 @@ class DockRpm(object):
     docker_env['SPEC_BASENAME'] = self.spec_basename
     docker_env['USER_UID'] = str(os.getuid())
     docker_env['USER_GID'] = str(os.getgid())
+    docker_env['RPMBUILD_ARGS'] = ' '.join(self.rpmbuild_args)
 
     #docker+ the Dockerfile
     self.dockerp(os.path.join(self.code_dir, 'Dockerfile'), self.dockerfile,
@@ -359,15 +387,52 @@ class DockRpm(object):
       spec_lines = fid.readlines()
     spec_lines = filter(lambda x: not x.startswith('%include'), spec_lines)
 
-    pid = Popen(['spectool', '-g', '-n', '-A', '-'], stdin=PIPE, stdout=PIPE)
+    pid = Popen(['spectool', '-C', '/home/dev/rpmbuild/SOURCES', '-g', '-n', '-A', '-'], stdin=PIPE, stdout=PIPE)
     curl_lines = pid.communicate(''.join(spec_lines))[0]
-    curl_lines = curl_lines.split('\n')
+    curl_lines = curl_lines.splitlines()
     curl_lines = filter(lambda x:x.startswith('dry run: '), curl_lines)
     curl_lines = map(lambda x:x[len('dry run: '):], curl_lines)
+    curl_lines.sort()
     pid.wait(0)
     with open(os.path.join(self.spec_dir, 'curl.bsh'), 'w') as fid:
       fid.write('\n'.join(curl_lines))
-    os.chmod(0755, os.path.join(self.spec_dir, 'curl.bsh'))
+    os.chmod(os.path.join(self.spec_dir, 'curl.bsh'), 0755)
+
+    # # Create fake src file for yum-builddep
+    # fake_files = []
+    # for line in curl_lines:
+    #   fake_file = line.split(' --output ')[1].split()[0]
+    #   fake_file = os.path.join(self.source_dir, fake_file)
+    #   if not os.path.exists(fake_file):
+    #     fake_files.append(fake_file)
+
+    # try:
+    #   for fake_file in fake_files:
+    #     with open(fake_file, 'w') as fid:
+    #       fid.write('deadbeef'*10) #13 byte min!?!?!
+    #   pid = Popen(['rpmbuild', '-bs', '-D', '_sourcedir %s' % self.source_dir,
+    #                '-D', '_srcrpmdir %s' % self.spec_dir, self.spec_path] + \
+    #               self.rpmbuild_args, stdout=PIPE)
+    #   filename = pid.communicate()[0].split()[1]
+    #   pid.wait(0)
+
+    #   pid = Popen(['sudo', 'yum-builddep', filename, '--assumeno'], stdout=PIPE)
+    #   stdout = pid.communicate()[0]
+    #   pid.wait() #will probably fail, that's the whole point!
+
+    #   deps = filter(lambda x: x.startswith(' --> '), stdout.split('\n'))
+    #   deps = map(lambda x: x.split()[-1], deps)
+
+    #   with  open(os.path.join(self.spec_dir, 'deps.txt'), 'w') as fid:
+    #     fid.write('\n'.join(deps))
+
+    #   os.remove(filename)
+    # finally:
+    #   for fake_file in fake_files:
+    #     try:
+    #       os.remove(fake_file)
+    #     except:
+    #       pass
 
     Popen(['docker', 'build', '-f', self.dockerfile, '-t', image_name, 
            '--quiet=true' if self.args.quiet else '--quiet=false',

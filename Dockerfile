@@ -9,6 +9,14 @@ FROM centos:7
 # USER_GID - Default 1500: Group id the repo files will be owned by
 #
 # DOCKRPM_CUDA_INSTALL - Optional: Cuda install step
+# ENABLE_LOCAL - By default, when building the docker image, the local rpm repo
+#                is not used when building the image, but only when running the
+#                image. I believe this to be best, because it keeps my
+#                intermediate work out of the docker image, thus making running
+#                a build step reflect the current state of my local repo ONLY
+#                and not some halfway in between "When I build that image last
+#                week, it had that package that was slightly different than it
+#                is now" situation
 
 #Make this a separate line because it's so common in many of my other dockers
 RUN yum groupinstall -y "Development Tools"
@@ -32,20 +40,22 @@ gpgcheck=0\nenabled=1\n' > /etc/yum.repos.d/rpmdocker.repo && \
 COPY source /home/dev/rpmbuild/SOURCES
 COPY repos /repos
 COPY gpg /gpg
-COPY [{SPEC_BASENAME}] /home/dev/rpmbuild/SPECS/
+COPY deps.txt /home/dev/rpmbuild/deps.txt
 
 RUN cp -n /repos/* /etc/yum.repos.d/ && \
-    cp -n /gpg/* /etc/pki/rpm-gpg/ 
-    #&& \
-    #yum clean --disablerepo=* --enablerepo=rpmdocker metadata && \
-    #yum-builddep -y /home/dev/rpmbuild/SPECS/[{SPEC_BASENAME}]
+    cp -n /gpg/* /etc/pki/rpm-gpg/ && \
+    if [ -s /home/dev/rpmbuild/deps.txt ]; then \
+      yum install [{ENABLE_LOCAL:--disablerepo=rpmdocker}] -y $(cat /home/dev/rpmbuild/deps.txt) || :; \
+    fi
+    #This line is expected to install all remote rpms, and NOT any of the local
+    #rpms. There is a change that ALL rpms are local, and none will be installed.
+    #This is why || : is added.
 
-RUN grep -v %include /home/dev/rpmbuild/SPECS/[{SPEC_BASENAME}] > /tmp/ihateperl.spec && \
-    spectool -C /home/dev/rpmbuild/SOURCES/ -g -S /tmp/ihateperl.spec; \
-    rm /tmp/ihateperl.spec
-#Thank you stupid perl script for not supporting %include... granted, given its
-#current method, it would be hard to support that, but still! > : | I bet if
-#_sourcedir wasn't overwritten, it might work.
+COPY curl.bsh /home/dev/rpmbuild/curl.bsh
+RUN cd /home/dev/rpmbuild/SOURCES && /home/dev/rpmbuild/curl.bsh
+#A more manual version of the following, WITHOUT depending on the spec file directly
+#My hope is that I can change the spec file, and as long as curl.bsh does not 
+#change, neither with the sha :)
 
 RUN groupmod -g [{USER_GID:1500}] dev && \
     usermod -u [{USER_UID:1500}] dev && \
@@ -54,6 +64,11 @@ RUN groupmod -g [{USER_GID:1500}] dev && \
 
 USER dev
 
+COPY [{SPEC_BASENAME}] /home/dev/rpmbuild/SPECS/
+
 CMD sudo yum clean --disablerepo=* --enablerepo=rpmdocker metadata && \
-    sudo yum-builddep -y /home/dev/rpmbuild/SPECS/[{SPEC_BASENAME}] && \
+    srpm_name=$(rpmbuild -bs /home/dev/rpmbuild/SPECS/[{SPEC_BASENAME}] [{RPMBUILD_ARGS}] | \grep "^Wrote: " | sed 's/Wrote: \(.*\)/\1/') && \
+    sudo yum-builddep -y ${srpm_name} && \
     [{DOCKRPM_RUN:bash}]
+#Run yum-builddep, only this time it should catch all the local rpms that 
+#weren't installed in the last yum install command

@@ -115,3 +115,10 @@ That way, all you need is
 
 It IS possible that installing these rpms could satisfy a dependency for an OS
 package dependency. To check this, run 
+
+## Issues ##
+
+- there is one call to `rpm` and one to `spectool` run in the host. While these
+are not a problem, it ties the host to centos/having those installed on other oses
+It would be nice to have a fail over to docker in case those done exist on the
+host
