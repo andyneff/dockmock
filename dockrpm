@@ -86,6 +86,7 @@ def parser():
      help='Run bash instead of rpmbuild')
   aa('--nvcc', default=find_nvcc())
   aa('--cuda_version')
+  aa('--nvidia_version')
   aa('--debug_on_fail', default=None, type='bool', const=True, nargs='?',
      help='''Commit and enter a container when the rpmbuild step fails. Default
      is to be prompted to enter''')
@@ -351,6 +352,15 @@ class DockRpm(object):
         else:
           cuda_version = StrictVersion(self.args.cuda_version)
 
+        if self.args.nvidia_version is None:
+          pid = Popen(['nvidia-smi', '-q'], stdout=PIPE)
+          stdout = pid.communicate()[0]
+          pid.wait(0)
+          stdout = filter(lambda x:x.startswith('Driver Version'), stdout.splitlines())
+          nvidia_version = StrictVersion(stdout[0].split()[3])
+        else:
+          nvidia_version = StrictVersion(self.args.nvidia_version)
+
         if cuda_version >= StrictVersion('7.0'):
           docker_env['DOCKRPM_CUDA_INSTALL'] = 'RUN yum install -y ' \
               'http://developer.download.nvidia.com/compute/cuda/repos/rhel7/' \
@@ -366,7 +376,9 @@ class DockRpm(object):
           raise Exception('Unsupported version of CUDA %s' % cuda_version)
 
     if self.args.bash:
-      docker_env['DOCKRPM_RUN'] = 'bash'
+      docker_env['DOCKRPM_RUN'] = '''echo "When you are ready, run:" && \
+                                     echo 'rpmbuild -ba -D "dist .el7" /home/dev/rpmbuild/SPECS/%s' && \
+                                     bash''' % self.spec_basename
     else:
       docker_env['DOCKRPM_RUN'] = \
           '''rpmbuild -ba -D "dist .el7" /home/dev/rpmbuild/SPECS/%s && \
@@ -453,10 +465,16 @@ class DockRpm(object):
       docker_options += ['-v', '%s:/repos:ro' % self.args.mount_repo]
     if self.args.mount_gpg:
       docker_options += ['-v', '%s:/gpg:ro' % self.args.mount_gpg]
-    if self.args.skip_build:
+    if self.args.bash:
+      #if interactive bash session then I want tty hooked up and SPEC file synced
+      docker_options += ['-t', '-v', '%s:/home/dev/rpmbuild/SPECS/%s' % (self.spec_path, self.spec_basename)]
+    elif self.args.skip_build:
+      #if skip build, skip build is used to speed things up, but  I want to at
+      #least make sure the spec file is up-to-date. read only to prevent accidents
       docker_options += ['-v', '%s:/home/dev/rpmbuild/SPECS/%s:ro' % (self.spec_path, self.spec_basename)]
 
-    pid = Popen(['docker', 'run', '-it', 
+
+    pid = Popen(['docker', 'run', '-i', 
                  '-v', '%s:/home/dev/rpmbuild/RPMS' % self.rpm_dir,
                  '-v', '%s:/home/dev/rpmbuild/SRPMS' % self.srpm_dir,
                  '--name', container_name] + docker_options + self.extra_args + [image_name])
