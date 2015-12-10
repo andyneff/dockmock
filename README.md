@@ -122,3 +122,16 @@ package dependency. To check this, run
 are not a problem, it ties the host to centos/having those installed on other oses
 It would be nice to have a fail over to docker in case those done exist on the
 host
+
+- There are a few assumptions that the `Name:` of the spec contains no dashes.
+This can probably be fixes by counting dashes backwards from the end instead
+
+- spectool is used. This is a... "perl" script, that can not handle %include
+directives. This is due to it running some rpm command in a temp dir, and it has
+no logic for copying any source files with the spec in the temp dir. To get around
+this, all %include lines are removed when using spectool
+
+- yum-builddep is used to auto install dependencies (And to determine the 
+dependencies in two different setup steps). yum-builddep does NOT LOT nosrc.rpm
+files, so use of the `NoSource:` directive will cause it to fail. Again, All lines
+starting with NoSource: are removed from the spec files for these tests.

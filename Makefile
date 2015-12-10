@@ -2,9 +2,39 @@ SHELL := /usr/bin/env bash
 
 FIX_DEP_ARG = --assumeno
 
-.PHONY: all install clean rpmdocker.repo cache_repo clean_rpms repos
+ARGS = --debug_on_fail=false
+
+SPECS = $(wildcard specs/*/*.spec)
+PHONY_TARGETS = all install clean rpmdocker.repo cache purge repos check_dep fix_dep build
+
+DRYRUN = 0
+
+ifneq "$(DRYRUN)" "0"
+DR = echo
+else
+DR =
+endif
+
+.PHONY: $(PHONY_TARGETS) $(SPECS)
+
+RECURSE := 0
 
 all:
+	$(MAKE) build $(SPECS)
+	#$(MAKE) build $$(ls specs/*/*.spec | grep -E '/(.*)/\1\.spec' | sed -r 's|.*/(.+)/\1\.spec|\1|')
+
+build:
+	$(eval RECURSE := 1)
+	@for target in $(filter-out $(PHONY_TARGETS),$(MAKECMDGOALS)); do \
+	  echo "Building $${target}"; \
+	  $(DR) ./dockrpm $(ARGS) $${target} || break; \
+	done
+
+%:
+	@if [ "$(RECURSE)" == 0 ]; then $(MAKE) RECURSE=1 build $@; fi
+
+$(SPECS):
+	@if [ "$(RECURSE)" == 0 ]; then $(MAKE) RECURSE=1 build $@; fi
 
 rpmdocker.repo:
 	echo "[rpmdocker]" > rpmdocker.repo
@@ -20,24 +50,27 @@ repo:
 	createrepo rpms
 	createrepo srpms
 
-cache_repo:
-	yum clean --disablerepo='*' --enablerepo=rpmdocker metadata
-	sudo yum clean --disablerepo='*' --enablerepo=rpmdocker metadata
 
-clean_rpms:
-	rm -rf rpms srpms
+cache:
+	$(DR) yum clean --disablerepo='*' --enablerepo=rpmdocker metadata
+	if [ "$$(id -u)" == "0" -a "$${SUDO_UID}" != "" -a "$${SUDO_UID}" != "0" ]; then \
+	  $(DR) sudo -u \#$${SUDO_UID} $(MAKE) cache; \
+	fi
 
-clean:s
-	rm rpmdocker.repo
+purge: clean
+	$(DR) rm -rf rpms srpms
+
+clean:
+	$(DR) rm -f rpmdocker.repo
 
 check_dep:
-	yum remove --assumeno `yumdb search from_repo rpmdocker | \grep '^\w' | \grep -v "Loaded plugins"`
+	$(DR) yum remove --assumeno `yumdb search from_repo rpmdocker | \grep '^\w' | \grep -v "Loaded plugins"`
 
 fix_dep:
 	while IFS='' read -r line || [[ -n "$$line" ]]; do\
 	  if [ "$$(echo $$line | awk '{print $$4}')" != "@rpmdocker" ]; then\
 	    package=$$(echo $$line | awk '{print $$1}');\
 	    echo "Broken package $$package"... Fixing;\
-	    yum install $(FIX_DEP_ARG) $$(rpm -qR  $$package | \grep -v ^rpmlib\( | sed 's/\([^ ]*\).*/\1/') || :;\
+	    $(DR) yum install $(FIX_DEP_ARG) $$(rpm -qR  $$package | \grep -v ^rpmlib\( | sed 's/\([^ ]*\).*/\1/') || :;\
 	  fi;\
 	done < <(yum remove -q --assumeno $$(yumdb search from_repo rpmdocker | \grep '^\w' | \grep -v "Loaded plugins") 2>&1 | \grep '^ \w' | head -n -1 | tail -n +2)

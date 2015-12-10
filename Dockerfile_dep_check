@@ -21,8 +21,22 @@ RUN yum makecache -y --disablerepo=rpmdocker && : [{CLEAR_CACHE:0}]
 
 COPY source /root/rpmbuild/SOURCES
 
-CMD read rpmbuild_args && cat - > $HOME/rpmbuild/SPECS/rpm.spec && \
+CMD read rpmbuild_args && cat - > $HOME/rpmbuild/SPECS/rpm_preparse.spec && \
+    rpmspec -P $HOME/rpmbuild/SPECS/rpm_preparse.spec > $HOME/rpmbuild/SPECS/rpm.spec && \
     truncate -s 20 /dev/shm/null $(grep -v '^%include' $HOME/rpmbuild/SPECS/rpm.spec | \
                      spectool -g -n -A -C $HOME/rpmbuild/SOURCES - | \
                      grep '^Getting' | sed 's/.* to \(.*\)/\1/') && \
-    yum-builddep --nogpgcheck --assumeno $(rpmbuild -bs ${rpmbuild_args} $HOME/rpmbuild/SPECS/rpm.spec | \grep "^Wrote: " | sed 's/Wrote: \(.*\)/\1/')
+    #creating fake missing source files
+    srpm_name=$(rpmbuild -bs [{RPMBUILD_ARGS}] $HOME/rpmbuild/SPECS/rpm.spec | \
+          grep "^Wrote: " | sed 's/Wrote: \(.*\)/\1/') && \
+    srpm_name2=$(echo $srpm_name | sed 's|nosrc|src|') && \
+    #Thank you https://bugzilla.redhat.com/show_bug.cgi?id=1166126 :(
+    if [ "$srpm_name" != "$srpm_name2" ]; then \
+      mv $srpm_name $srpm_name2; \
+    fi && \
+    yum-builddep --nogpgcheck --assumeno ${srpm_name2}
+    #I still have no gpg here because... 1) SECUIRITY DOESN'T MATTER, I'm not
+    #installing here, and 2) with --assumeno it will not install the gpg certs,
+    #and fail. Rather then solving THAT problem, --nogpgcheck just makes sense
+    #here
+#Change this to yum deplist -q ${srpm_name}

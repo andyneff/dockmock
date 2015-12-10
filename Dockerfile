@@ -28,7 +28,8 @@ RUN yum install -y spectool yum-utils createrepo sudo
 RUN groupadd -g 1500 dev && \
     useradd -u 1500 -g 1500 dev && \
     echo "dev ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers && \
-    mkdir -p ~dev/rpmbuild/SPECS ~dev/rpmbuild/BUILD ~dev/rpmbuild/BUILDROOT ~dev/rpmbuild/SOURCES ~dev/rpmbuild/SPECS ~dev/rpmbuild/RPMS ~dev/rpmbuild/SRPMS && \
+    sed -i '/requiretty/d' /etc/sudoers && \
+    mkdir -p ~dev/rpmbuild/{SPECS,BUILD,BUILDROOT,SPECS,SOURCES,RPMS,SRPMS} && \
     printf '[rpmdocker]\nname=rpmdocker\nbaseurl=file:///home/dev/rpmbuild/RPMS\n\
 gpgcheck=0\nenabled=1\n' > /etc/yum.repos.d/rpmdocker.repo && \
     createrepo /home/dev/rpmbuild/RPMS && \
@@ -37,7 +38,6 @@ gpgcheck=0\nenabled=1\n' > /etc/yum.repos.d/rpmdocker.repo && \
 
 #End of Common Docker image
 
-COPY source /home/dev/rpmbuild/SOURCES
 COPY repos /repos
 COPY gpg /gpg
 COPY deps.txt /home/dev/rpmbuild/deps.txt
@@ -52,7 +52,8 @@ RUN cp -n /repos/* /etc/yum.repos.d/ && \
     #This is why || : is added.
 
 COPY curl.bsh /home/dev/rpmbuild/curl.bsh
-RUN cd /home/dev/rpmbuild/SOURCES && /home/dev/rpmbuild/curl.bsh
+RUN cd /home/dev/rpmbuild/SOURCES && \
+    /home/dev/rpmbuild/curl.bsh
 #A more manual version of the following, WITHOUT depending on the spec file directly
 #My hope is that I can change the spec file, and as long as curl.bsh does not 
 #change, neither with the sha :)
@@ -64,11 +65,20 @@ RUN groupmod -g [{USER_GID:1500}] dev && \
 
 USER dev
 
+COPY source /home/dev/rpmbuild/SOURCES
 COPY [{SPEC_BASENAME}] /home/dev/rpmbuild/SPECS/
 
 CMD sudo yum clean --disablerepo=* --enablerepo=rpmdocker metadata && \
-    srpm_name=$(rpmbuild -bs /home/dev/rpmbuild/SPECS/[{SPEC_BASENAME}] [{RPMBUILD_ARGS}] | \grep "^Wrote: " | sed 's/Wrote: \(.*\)/\1/') && \
-    sudo yum-builddep -y ${srpm_name} && \
+    srpm_name=$(rpmbuild -bs /home/dev/rpmbuild/SPECS/[{SPEC_BASENAME}] \
+        -D "_srcrpmdir /tmp" [{RPMBUILD_ARGS}] | \grep "^Wrote: " | \
+        sed 's/Wrote: \(.*\)/\1/') && \
+    srpm_name2=$(echo $srpm_name | sed 's|nosrc|src|') && \
+    if [ "$srpm_name" != "$srpm_name2" ]; then \
+      mv $srpm_name $srpm_name2; \
+    fi && \
+    #srpm_name=$(rpmbuild -bs /home/dev/rpmbuild/SPECS/[{SPEC_BASENAME}] [{RPMBUILD_ARGS}] | \grep "^Wrote: " | sed 's/Wrote: \(.*\)/\1/') && \
+    #Thank you https://bugzilla.redhat.com/show_bug.cgi?id=1166126 :(
+    sudo yum-builddep -y ${srpm_name2} && \
     [{DOCKRPM_RUN:bash}]
 #Run yum-builddep, only this time it should catch all the local rpms that 
 #weren't installed in the last yum install command

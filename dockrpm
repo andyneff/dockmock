@@ -90,8 +90,9 @@ def parser():
   aa('--debug_on_fail', default=None, type='bool', const=True, nargs='?',
      help='''Commit and enter a container when the rpmbuild step fails. Default
      is to be prompted to enter''')
-  aa('--quiet', default=False, type='bool', const=True, nargs='?')
+  #aa('--quiet', default=False, type='bool', const=True, nargs='?')
   aa('--skip_build', default=False, type='bool', const=True, nargs='?')
+  aa('--skip_run', default=False, type='bool', const=True, nargs='?')
   aa('--with', default=[], action='append', 
      help='Args for rpmbuild, not sent to recursive builds')
   aa('--without', default=[], action='append',
@@ -113,10 +114,12 @@ class DockRpm(object):
     
     (self.args, self.extra_args) = self.parser.parse_known_args(args)
 
-    self.rpmbuild_args = [entry for value in self.args.without 
+    self.rpmbuild_args = ['-D', '"dist .el7"'] + \
+                         [entry for value in self.args.without 
                                 for entry in ['--without', value]] + \
                          [entry for value in getattr(self.args, 'with')
                                 for entry in ['--with', value]]
+    #Oh the fun of having to know I need to quote/escape here... 
 
     self.code_dir = os.path.abspath(os.path.dirname(__file__))
     if self.args.root_dir:
@@ -158,16 +161,29 @@ class DockRpm(object):
     pid.wait(0)
     return map(lambda x:x.split('\t'), stdout.splitlines())
 
-  def search_local(self, package_info):
-    local_pacakge_name = package_info[0].split('-', 1)
-    if len(local_pacakge_name)==1:
-      local_pacakge_name = local_pacakge_name[0]+'_local'
-    else:
-      local_pacakge_name = local_pacakge_name[0]+'_local-'+local_pacakge_name[1]
+  def search_local(self, package_info, package_name_suffix='_local'):
+    local_pacakge_name = package_info[0].split('-')
+    local_pacakge_names = ['-'.join(local_pacakge_name[0:x] + 
+                          [local_pacakge_name[x]+package_name_suffix] + 
+                          local_pacakge_name[x+1:]) 
+                          for x in range(len(local_pacakge_name))]
+    #I've thought about this for a while, there's no way I can determine where
+    #the prefix should be added. So I just try them all, and check them all
+    #example
+    #[mylibrary_local, mylibrary_local-devel]
+    #but what if it was my-library? then I need to check
+    #[my_local-library, my-library_local, my_local-library-devel, 
+    # my-library_local-devel]
+    #This should work best... Hopefully no false positives.
+    local_pacakge_names = [local_pacakge_name] + local_pacakge_names
+    #Add it without the suffix, in the case that the suffix is already added in
+    #the spec file. This is the case I want supported in the end
+
     for spec in glob(os.path.join(self.specs_dir, '*', '*.spec')):
       rpm_names = self.get_rpm_names_from_specfile(spec)
       for rpm_name in rpm_names:
-        if package_info[0] == rpm_name[0] or local_pacakge_name == rpm_name[0]:
+        if package_info[0] == rpm_name[0] or \
+           any([x == rpm_name[0] for x in local_pacakge_names]):
           if len(package_info)==1:
             return spec
           elif len(package_info)==3:
@@ -270,7 +286,8 @@ class DockRpm(object):
     
     self.dockerp(os.path.join(self.code_dir, 'Dockerfile_dep_check'),
                  self.dockerfile_dep_check,
-                 {'CLEAR_CACHE':str(datetime.date.today().toordinal()/5)})
+                 {'CLEAR_CACHE':str(datetime.date.today().toordinal()/5),
+                  'RPMBUILD_ARGS':' '.join(self.rpmbuild_args)})
     #Clear the yum cache every 5 days, this forces docker to create a new image
 
     # Prep repo
@@ -279,36 +296,34 @@ class DockRpm(object):
     if not os.path.exists(os.path.join(self.srpm_dir, 'repodata', 'repomd.xml')):
       Popen(['createrepo', self.srpm_dir]).wait(0)
 
-  def check_dependencies(self):
-    
-    image_name = 'dockrpm_%s_dep_check' % self.spec_name
-
+  def build_check_dependencies_image(self, image_name):
     ### Build Dep Check image
-    if not self.args.skip_build:
-      print 'Building dependency checking docker'
-      cmd = ['docker', 'build', '-t', image_name, 
-             '--quiet=true' if self.args.quiet else '--quiet=false',
-             '-f', self.dockerfile_dep_check, self.spec_dir]
-      Popen(cmd).wait(0)
-    
+    print 'Building dependency checking docker'
+    cmd = ['docker', 'build', '-t', image_name, 
+           '-f', self.dockerfile_dep_check, self.spec_dir]
+    Popen(cmd).wait(0)
+
+  def run_check_dependencies_image(self, image_name):
     ### Run Dep Check
     print 'Checking dependencies for %s' % self.spec_path
 
     #Run yum-builddep
     with open(self.spec_path, 'r') as fid:
-      #remove %includes cause they are just hard to handle :-\
-      spec_lines = filter(lambda x: '%include' not in x, fid.readlines())
+      docker_input = self.rpmbuild_args+'\n' + fid.read()
+    #The input to this docker is a line of rpmbuild args (--with/out, etc)
+    #plus the spec file 
 
     cmd = ['docker', 'run', '-i', '--rm',
            '-v', '%s:/home/dev/rpmbuild/RPMS' % self.rpm_dir,
            '-v', '%s:/home/dev/rpmbuild/SRPMS' % self.srpm_dir,
            image_name]
     pid = Popen(cmd, stdin=PIPE, stdout=PIPE)
-    spec_lines = [' '.join(self.rpmbuild_args)+'\n'] + spec_lines
     #inject the --with/without/etc... options into the docker as the first line of stdin
 
-    stdout = pid.communicate(''.join(spec_lines))[0]
+    stdout = pid.communicate(docker_input)[0]
     pid.wait() #It is non-zero when packages are missing
+    print stdout
+    exit(1)
     
     dependencies = dependencies_from_yum_builddep(stdout)
     dependencies.sort()
@@ -321,7 +336,7 @@ class DockRpm(object):
     for line in stdout.splitlines():
       if line.startswith(error_message):
         missing_packages.append(line[len(error_message):])
-        
+
     ### Scan if local packages satisfy missing pacakges
     for missing_package in missing_packages:
       package_info = re.split('\s*([<=>]+)\s*', missing_package)
@@ -336,6 +351,15 @@ class DockRpm(object):
         DockRpm(dep_args).main()
       else:
         raise Exception('No match for package %s' % missing_package)
+
+  def check_dependencies(self):
+    
+    image_name = 'dockrpm_%s_dep_check' % self.spec_name
+    
+    if not self.args.skip_build:
+      self.build_check_dependencies_image(image_name)
+
+    self.run_check_dependencies_image(image_name)
 
   def build_docker_image(self, image_name):
     print 'Building docker image for %s' % self.spec_path
@@ -365,13 +389,13 @@ class DockRpm(object):
           docker_env['DOCKRPM_CUDA_INSTALL'] = 'RUN yum install -y ' \
               'http://developer.download.nvidia.com/compute/cuda/repos/rhel7/' \
               'x86_64/cuda-repo-rhel7-7.5-18.x86_64.rpm epel-release && ' \
-              'yum install -y cuda-%d-%d' % cuda_version.version[0:2]
+              'yum install -y cuda.%d-%d' % cuda_version.version[0:2]
 
         elif cuda_version >= StrictVersion('5.5'): #not 100% sure this works in rhel 7 ;)
           docker_env['DOCKRPM_CUDA_INSTALL'] = 'RUN yum install -y ' \
               'http://developer.download.nvidia.com/compute/cuda/repos/rhel6/' \
               'x86_64/cuda-repo-rhel6-7.5-18.x86_64.rpm epel-release && ' \
-              'yum install -y cuda-%d-%d' % cuda_version.version[0:2]
+              'yum install -y cuda.%d-%d' % cuda_version.version[0:2]
         else:
           raise Exception('Unsupported version of CUDA %s' % cuda_version)
 
@@ -399,7 +423,8 @@ class DockRpm(object):
       spec_lines = fid.readlines()
     spec_lines = filter(lambda x: not x.startswith('%include'), spec_lines)
 
-    pid = Popen(['spectool', '-C', '/home/dev/rpmbuild/SOURCES', '-g', '-n', '-A', '-'], stdin=PIPE, stdout=PIPE)
+    pid = Popen(['spectool', '-g', '-n', '-A', '-'], stdin=PIPE, stdout=PIPE, 
+                cwd=self.source_dir)
     curl_lines = pid.communicate(''.join(spec_lines))[0]
     curl_lines = curl_lines.splitlines()
     curl_lines = filter(lambda x:x.startswith('dry run: '), curl_lines)
@@ -410,44 +435,7 @@ class DockRpm(object):
       fid.write('\n'.join(curl_lines))
     os.chmod(os.path.join(self.spec_dir, 'curl.bsh'), 0755)
 
-    # # Create fake src file for yum-builddep
-    # fake_files = []
-    # for line in curl_lines:
-    #   fake_file = line.split(' --output ')[1].split()[0]
-    #   fake_file = os.path.join(self.source_dir, fake_file)
-    #   if not os.path.exists(fake_file):
-    #     fake_files.append(fake_file)
-
-    # try:
-    #   for fake_file in fake_files:
-    #     with open(fake_file, 'w') as fid:
-    #       fid.write('deadbeef'*10) #13 byte min!?!?!
-    #   pid = Popen(['rpmbuild', '-bs', '-D', '_sourcedir %s' % self.source_dir,
-    #                '-D', '_srcrpmdir %s' % self.spec_dir, self.spec_path] + \
-    #               self.rpmbuild_args, stdout=PIPE)
-    #   filename = pid.communicate()[0].split()[1]
-    #   pid.wait(0)
-
-    #   pid = Popen(['sudo', 'yum-builddep', filename, '--assumeno'], stdout=PIPE)
-    #   stdout = pid.communicate()[0]
-    #   pid.wait() #will probably fail, that's the whole point!
-
-    #   deps = filter(lambda x: x.startswith(' --> '), stdout.split('\n'))
-    #   deps = map(lambda x: x.split()[-1], deps)
-
-    #   with  open(os.path.join(self.spec_dir, 'deps.txt'), 'w') as fid:
-    #     fid.write('\n'.join(deps))
-
-    #   os.remove(filename)
-    # finally:
-    #   for fake_file in fake_files:
-    #     try:
-    #       os.remove(fake_file)
-    #     except:
-    #       pass
-
     Popen(['docker', 'build', '-f', self.dockerfile, '-t', image_name, 
-           '--quiet=true' if self.args.quiet else '--quiet=false',
            self.spec_dir]).wait(0)
 
   def run_docker_image(self, image_name, container_name):
@@ -482,7 +470,7 @@ class DockRpm(object):
       Popen(['docker', 'rm', container_name]).wait(0)
     else:
       print 'Build failed on %s. Would you like to enter a debug session? (y/n)' % container_name
-      if self.args.debug_on_fail is None:
+      if self.args.debug_on_fail is None and not self.args.bash:
         r = str(raw_input())
         r = r.lower().startswith('y')
       else:
@@ -511,7 +499,8 @@ class DockRpm(object):
     if not self.args.skip_build:
       self.build_docker_image(image_name)
 
-    self.run_docker_image(image_name, container_name)
+    if not self.args.skip_run:
+      self.run_docker_image(image_name, container_name)
 
     print 'Build success on %s' % self.spec_path
 
