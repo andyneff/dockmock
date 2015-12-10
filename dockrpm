@@ -8,6 +8,12 @@ from glob import glob
 import datetime
 import re
 import tempfile
+try:
+  from shlex import quote
+except:
+  from pipes import quote
+import json
+
 from distutils.version import LooseVersion, StrictVersion
 from distutils.dir_util import mkpath, copy_tree
 from distutils.spawn import find_executable as which
@@ -232,17 +238,17 @@ class DockRpm(object):
                       self.spec_path)
     mkpath(os.path.dirname(self.spec_path))
     with open(self.spec_path, 'w') as fid:
-      fid.writeline('Name: %s' % os.path.splitext(os.path.basename(self.spec_path))[0])
-      fid.writeline("License: None")
-      fid.writeline("Group: Misc")
-      fid.writeline("Summary: Fake rpm")
-      fid.writeline("Version: %s" % self.args.fake_version)
-      fid.writeline("Release: 1%{?dist}")
+      fid.writelines(['Name: %s' % os.path.splitext(os.path.basename(self.spec_path))[0],
+                      "License: None\n",
+                      "Group: Misc\n",
+                      "Summary: Fake rpm\n",
+                      "Version: %s\n" % self.args.fake_version,
+                      "Release: 1%{?dist}\n"])
       if self.args.fake_arch:
-        fid.writeline("BuildArch: %s" % self.args.fake_arch)
-      fid.writeline("%description")
-      fid.writeline("Fake Rpm")
-      fid.writeline("%files")
+        fid.write("BuildArch: %s\n" % self.args.fake_arch)
+      fid.writelines(["%description\n",
+                      "Fake Rpm\n",
+                      "%files\n"])
 
   def dockerp(self, input_file, output_file, additional_env, inherit_env=True):
     if inherit_env:
@@ -307,50 +313,62 @@ class DockRpm(object):
     ### Run Dep Check
     print 'Checking dependencies for %s' % self.spec_path
 
-    #Run yum-builddep
-    with open(self.spec_path, 'r') as fid:
-      docker_input = self.rpmbuild_args+'\n' + fid.read()
-    #The input to this docker is a line of rpmbuild args (--with/out, etc)
-    #plus the spec file 
+    try:
+      #Run yum-builddep
+      with open(self.spec_path, 'r') as fid:
+        docker_input = ' '.join(self.rpmbuild_args)+'\n' + fid.read()
+      #The input to this docker is a line of rpmbuild args (--with/out, etc)
+      #plus the spec file 
 
-    cmd = ['docker', 'run', '-i', '--rm',
-           '-v', '%s:/home/dev/rpmbuild/RPMS' % self.rpm_dir,
-           '-v', '%s:/home/dev/rpmbuild/SRPMS' % self.srpm_dir,
-           image_name]
-    pid = Popen(cmd, stdin=PIPE, stdout=PIPE)
-    #inject the --with/without/etc... options into the docker as the first line of stdin
+      cmd = ['docker', 'run', '-i', '--rm',
+             '-v', '%s:/home/dev/rpmbuild/RPMS' % self.rpm_dir,
+             '-v', '%s:/home/dev/rpmbuild/SRPMS' % self.srpm_dir,
+             image_name]
+      pid = Popen(cmd, stdin=PIPE, stdout=PIPE)
+      #inject the --with/without/etc... options into the docker as the first line of stdin
 
-    stdout = pid.communicate(docker_input)[0]
-    pid.wait() #It is non-zero when packages are missing
-    print stdout
-    exit(1)
-    
-    dependencies = dependencies_from_yum_builddep(stdout)
-    dependencies.sort()
-    with  open(os.path.join(self.spec_dir, 'deps.txt'), 'w') as fid:
-      fid.write('\n'.join(dependencies))
+      stdout = pid.communicate(docker_input)[0]
+      pid.wait(0)
+      
+      dependencies = dependencies_from_yum_builddep(stdout)
+      dependencies.sort()
+      with  open(os.path.join(self.spec_dir, 'deps.txt'), 'w') as fid:
+        fid.write('\n'.join(dependencies))
 
-    ###Scan for missing packages
-    missing_packages = []
-    error_message = 'Error: No Package found for '
-    for line in stdout.splitlines():
-      if line.startswith(error_message):
-        missing_packages.append(line[len(error_message):])
+      ###Scan for missing packages
+      missing_packages = []
+      error_message = 'Error: No Package found for '
+      for line in stdout.splitlines():
+        if line.startswith(error_message):
+          missing_packages.append(line[len(error_message):])
 
-    ### Scan if local packages satisfy missing pacakges
-    for missing_package in missing_packages:
-      package_info = re.split('\s*([<=>]+)\s*', missing_package)
-      match = self.search_local(package_info)
-      if match:
-        #Rerun the whole thing on each new dependency matched
-        print 'Building local dependency %s' % missing_package
-        #remove the spec name from the arg list and add the dependency to the 
-        #arg list instead
-        dep_args = [match] + argparse.filter_args(self.args, None, 
-                                                  ['spec', 'with', 'without'])
-        DockRpm(dep_args).main()
-      else:
-        raise Exception('No match for package %s' % missing_package)
+      ### Scan if local packages satisfy missing pacakges
+      for missing_package in missing_packages:
+        package_info = re.split('\s*([<=>]+)\s*', missing_package)
+        match = self.search_local(package_info)
+        if match:
+          #Rerun the whole thing on each new dependency matched
+          print 'Building local dependency %s' % missing_package
+          #remove the spec name from the arg list and add the dependency to the 
+          #arg list instead
+          dep_args = [match] + argparse.filter_args(self.args, None, 
+                                                    ['spec', 'with', 'without'])
+          DockRpm(dep_args).main()
+        else:
+          raise Exception('No match for package %s' % missing_package)
+    except:
+      print('Error running dep_check. To run the docker, try:')
+      print('(echo %s; cat %s ) | %s' % \
+            (' '.join([quote(x) for x in self.rpmbuild_args[2:]]),
+             self.spec_path, ' '.join([quote(x) for x in cmd])))
+      print('To debug, try:')
+      cmd = cmd[0:2] + ['-t', '-v', '%s:/root/rpmbuild/SPECS/rpm_preparse.spec' % self.spec_path] + cmd[2:] + ['bash']
+      print(' '.join([quote(x) for x in cmd]))
+      print('Then in the docker, run (without the cat portion)')
+      pid = Popen(['docker', 'inspect', '-f', '{{json .Config.Cmd}}', image_name], stdout=PIPE)
+      docker_cmd = json.loads(pid.communicate()[0])
+      print(' '.join([quote(x) for x in docker_cmd]))
+      raise
 
   def check_dependencies(self):
     
@@ -432,6 +450,7 @@ class DockRpm(object):
     curl_lines.sort()
     pid.wait(0)
     with open(os.path.join(self.spec_dir, 'curl.bsh'), 'w') as fid:
+      fid.write('set -eu\n')
       fid.write('\n'.join(curl_lines))
     os.chmod(os.path.join(self.spec_dir, 'curl.bsh'), 0755)
 
