@@ -13,12 +13,15 @@ try:
 except:
   from pipes import quote
 import json
+import logging
 
 from distutils.version import LooseVersion, StrictVersion
 from distutils.dir_util import mkpath, copy_tree
 from distutils.spawn import find_executable as which
 
 import argparse_dissect as argparse
+
+from vsi import PopenRedirect, LoggerFile
 
 class Popen(Popen_orig):
   def __init__(self, *args, **kwargs):
@@ -78,33 +81,39 @@ def parser():
              directory (./blah/myfile, for ./blah/myfile/myfile.spec')''')
   aa('--fake', nargs='?', const=True, default=False, type='bool', 
      help='Create a fake spec')
-  aa('--fake_version', default='1.0.0', help="Fake version number")
-  aa('--fake_arch', default=None, help="Fake arch")
-  aa('--dep_check', default=True, type='bool',
+  aa('--fake-version', default='1.0.0', help="Fake version number")
+  aa('--fake-arch', default=None, help="Fake arch")
+  aa('--dep-check', default=True, type='bool',
      help='Skip dependency checking')
-  aa('--docker_dep_check', default=False, action='store_true',
+  aa('--docker-dep-check', default=False, action='store_true',
      help='''Check dependencies in a docker. Necessary to be run at least once 
              to create deps.txt, unless you create it manually''')
-  aa('--root_dir', default=None, help='Change root dir')
-  aa('--mount_repo', default='/etc/yum.repos.d', help='emptystring to disable')
-  aa('--mount_gpg', default='/etc/pki/rpm-gpg', help='empty string to disable')
+  aa('--root-dir', default=None, help='Change root dir')
+  aa('--mount-repo', default='/etc/yum.repos.d', help='emptystring to disable')
+  aa('--mount-gpg', default='/etc/pki/rpm-gpg', help='empty string to disable')
   aa('--bash', default=False, action='store_true', 
      help='Run bash instead of rpmbuild')
   aa('--nvcc', default=find_nvcc())
-  aa('--cuda_version')
-  aa('--nvidia_version')
-  aa('--debug_on_fail', default=None, type='bool', const=True, nargs='?',
+  aa('--cuda-version')
+  aa('--nvidia-version')
+  aa('--debug-on-fail', default=None, type='bool', const=True, nargs='?',
      help='''Commit and enter a container when the rpmbuild step fails. Default
      is to be prompted to enter''')
   #aa('--quiet', default=False, type='bool', const=True, nargs='?')
-  aa('--skip_build', default=False, type='bool', const=True, nargs='?')
-  aa('--skip_run', default=False, type='bool', const=True, nargs='?')
+  aa('--skip-build', default=False, type='bool', const=True, nargs='?')
+  aa('--skip-run', default=False, type='bool', const=True, nargs='?')
   aa('--with', default=[], action='append', 
      help='Args for rpmbuild, not sent to recursive builds')
   aa('--without', default=[], action='append',
      help='Args for rpmbuild, not sent to recursive builds')
+  aa('--verbose', '-v', default=4, type=int, choices=range(6),
+     help='''Logging level between 0 and 5, 5 is most verbose, 0 is none 
+             (no output). Default: 4''')
 
   return my_parser
+
+def cmd_to_str(cmd):
+  return ' '.join([quote(x) for x in cmd])
 
 class DockRpm(object):
   SPEC_DIR='specs'
@@ -119,7 +128,7 @@ class DockRpm(object):
     self.parser = parser()
     
     (self.args, self.extra_args) = self.parser.parse_known_args(args)
-
+    
     self.rpmbuild_args = ['-D', '"dist .el7"'] + \
                          [entry for value in self.args.without 
                                 for entry in ['--without', value]] + \
@@ -154,6 +163,9 @@ class DockRpm(object):
     self.dockerfile_dep_check = os.path.join(self.spec_dir, 
                                              'Dockerfile_dep_check')
     
+    self.logger = logging.getLogger(__name__)
+    self.log_level = (6-self.args.verbose)*10 #(10-60)
+
     assert not os.path.samefile(self.spec_dir, self.root_dir), \
         'If the spec dir and the root dir are the same, bad things can happen'
     assert not os.path.samefile(self.spec_dir, self.code_dir), \
@@ -271,6 +283,23 @@ class DockRpm(object):
     return output_file
     
   def setup(self):
+
+    if self.log_level <= logging.CRITICAL:
+      sh = logging.StreamHandler()
+      #fh = logging.FileHandler('build.log')
+      sh.setLevel(self.log_level)
+      #fh.setLevel(logging.DEBUG)
+      formatter = logging.Formatter('%(asctime)s : %(levelname)s - %(message)s')
+      sh.setFormatter(formatter)
+      #fh.setFormatter(formatter)
+      self.logger.addHandler(sh)
+      #logger.addHandler(fh)
+      self.logger.setLevel(self.log_level)
+    else:
+      if not self.logger.handlers:
+        #Suppress any "no handler available" message
+        self.logger.addHandler(logging.NullHandler())
+
     # Prep extra files
     if self.args.fake:
       create_fake()
@@ -297,21 +326,31 @@ class DockRpm(object):
     #Clear the yum cache every 5 days, this forces docker to create a new image
 
     # Prep repo
-    if not os.path.exists(os.path.join(self.rpm_dir, 'repodata', 'repomd.xml')):
-      Popen(['createrepo', self.rpm_dir]).wait(0)
-    if not os.path.exists(os.path.join(self.srpm_dir, 'repodata', 'repomd.xml')):
-      Popen(['createrepo', self.srpm_dir]).wait(0)
+    if not os.path.exists(os.path.join(self.rpm_dir, 'repodata', 
+                                       'repomd.xml')):
+      cmd = ['createrepo', self.rpm_dir]
+      self.logger.debug(cmd_to_str(cmd))
+      with PopenRedirect(LoggerFile(self.logger.debug)) as fid:
+        Popen(cmd, stdout=fid.stdout, stderr=STDOUT).wait(0)
+    if not os.path.exists(os.path.join(self.srpm_dir, 'repodata', 
+                                       'repomd.xml')):
+      cmd = ['createrepo', self.srpm_dir]
+      self.logger.debug(cmd_to_str(cmd))
+      with PopenRedirect(LoggerFile(self.logger.debug)) as fid:
+        Popen(cmd, stdout=fid.stdout, stderr=STDOUT).wait(0)
 
   def build_check_dependencies_image(self, image_name):
     ### Build Dep Check image
-    print 'Building dependency checking docker'
+    self.logger.info('Building dependency checking docker')
     cmd = ['docker', 'build', '-t', image_name, 
            '-f', self.dockerfile_dep_check, self.spec_dir]
-    Popen(cmd).wait(0)
+    self.logger.debug(cmd_to_str(cmd))
+    with PopenRedirect(LoggerFile(self.logger.debug)) as fid:
+      Popen(cmd, stdout=fid.stdout, stderr=STDOUT).wait(0)
 
   def run_check_dependencies_image(self, image_name):
     ### Run Dep Check
-    print 'Checking dependencies for %s' % self.spec_path
+    self.logger.info('Checking dependencies for %s' % self.spec_path)
 
     try:
       #Run yum-builddep
@@ -324,6 +363,7 @@ class DockRpm(object):
              '-v', '%s:/home/dev/rpmbuild/RPMS' % self.rpm_dir,
              '-v', '%s:/home/dev/rpmbuild/SRPMS' % self.srpm_dir,
              image_name]
+      self.logger.debug(cmd_to_str(cmd))
       pid = Popen(cmd, stdin=PIPE, stdout=PIPE)
       #inject the --with/without/etc... options into the docker as the first line of stdin
 
@@ -332,7 +372,7 @@ class DockRpm(object):
       
       dependencies = dependencies_from_yum_builddep(stdout)
       dependencies.sort()
-      with  open(os.path.join(self.spec_dir, 'deps.txt'), 'w') as fid:
+      with open(os.path.join(self.spec_dir, 'deps.txt'), 'w') as fid:
         fid.write('\n'.join(dependencies))
 
       ###Scan for missing packages
@@ -348,7 +388,7 @@ class DockRpm(object):
         match = self.search_local(package_info)
         if match:
           #Rerun the whole thing on each new dependency matched
-          print 'Building local dependency %s' % missing_package
+          self.logger.warning('Building local dependency %s' % missing_package)
           #remove the spec name from the arg list and add the dependency to the 
           #arg list instead
           dep_args = [match] + argparse.filter_args(self.args, None, 
@@ -357,17 +397,17 @@ class DockRpm(object):
         else:
           raise Exception('No match for package %s' % missing_package)
     except:
-      print('Error running dep_check. To run the docker, try:')
-      print('(echo %s; cat %s ) | %s' % \
-            (' '.join([quote(x) for x in self.rpmbuild_args[2:]]),
-             self.spec_path, ' '.join([quote(x) for x in cmd])))
-      print('To debug, try:')
+      self.logger.critical('Error running dep_check. To run the docker, try:')
+      self.logger.info('(echo %s; cat %s ) | %s' % \
+            (cmd_to_str(self.rpmbuild_args[2:]), self.spec_path, 
+             cmd_to_str(cmd)))
+      self.logger.info('To debug, try:')
       cmd = cmd[0:2] + ['-t', '-v', '%s:/root/rpmbuild/SPECS/rpm_preparse.spec' % self.spec_path] + cmd[2:] + ['bash']
-      print(' '.join([quote(x) for x in cmd]))
-      print('Then in the docker, run (without the cat portion)')
+      self.logger.info(cmd_to_str(cmd))
+      self.logger.info('Then in the docker, run (without the cat portion)')
       pid = Popen(['docker', 'inspect', '-f', '{{json .Config.Cmd}}', image_name], stdout=PIPE)
-      docker_cmd = json.loads(pid.communicate()[0])
-      print(' '.join([quote(x) for x in docker_cmd]))
+      cmd = json.loads(pid.communicate()[0])
+      self.logger.info(cmd_to_str(cmd))
       raise
 
   def check_dependencies(self):
@@ -380,7 +420,7 @@ class DockRpm(object):
     self.run_check_dependencies_image(image_name)
 
   def build_docker_image(self, image_name):
-    print 'Building docker image for %s' % self.spec_path
+    self.logger.info('Building docker image for %s' % self.spec_path)
     docker_env = dict(os.environ)
 
     with open(os.path.join(self.specs_dir, 'cuda'), 'r') as fid:
@@ -454,18 +494,25 @@ class DockRpm(object):
       fid.write('\n'.join(curl_lines))
     os.chmod(os.path.join(self.spec_dir, 'curl.bsh'), 0755)
 
-    Popen(['docker', 'build', '-f', self.dockerfile, '-t', image_name, 
-           self.spec_dir]).wait(0)
+
+    cmd = ['docker', 'build', '-f', self.dockerfile, '-t', image_name, 
+           self.spec_dir]
+    self.logger.debug(cmd_to_str(cmd))
+    with PopenRedirect(LoggerFile(self.logger.debug)) as fid:
+      Popen(cmd, stdout=fid.stdout, stderr=STDOUT).wait(0)
 
   def run_docker_image(self, image_name, container_name):
 
-    print 'Running build docker for %s' % self.spec_path
+    self.logger.info('Running build docker for %s' % self.spec_path)
     
     #clean up incase previous attempt was dirty
     with open(os.devnull, 'w') as fid:
       if not Popen(['docker', 'inspect', container_name], 
                    stdout=fid, stderr=STDOUT).wait():
-        Popen(['docker', 'rm', container_name]).wait(0)
+        cmd = ['docker', 'rm', container_name]
+        self.logger.debug(cmd_to_str(cmd))
+        with PopenRedirect(LoggerFile(self.logger.debug)) as fid:
+          Popen(cmd, stdout=fid.stdout, stderr=STDOUT).wait(0)
 
     docker_options = []
     if self.args.mount_repo:
@@ -481,32 +528,45 @@ class DockRpm(object):
       docker_options += ['-v', '%s:/home/dev/rpmbuild/SPECS/%s:ro' % (self.spec_path, self.spec_basename)]
 
 
-    pid = Popen(['docker', 'run', '-i', 
-                 '-v', '%s:/home/dev/rpmbuild/RPMS' % self.rpm_dir,
-                 '-v', '%s:/home/dev/rpmbuild/SRPMS' % self.srpm_dir,
-                 '--name', container_name] + docker_options + self.extra_args + [image_name])
-    if pid.wait()==0:
-      Popen(['docker', 'rm', container_name]).wait(0)
+    cmd = ['docker', 'run', '-i', 
+           '-v', '%s:/home/dev/rpmbuild/RPMS' % self.rpm_dir,
+           '-v', '%s:/home/dev/rpmbuild/SRPMS' % self.srpm_dir,
+           '--name', container_name] + docker_options + self.extra_args + \
+           [image_name]
+    self.logger.debug(cmd_to_str(cmd))
+    with PopenRedirect(LoggerFile(self.logger.debug)) as fid:
+      return_value = Popen(cmd, stdout=fid.stdout, stderr=STDOUT).wait()
+
+    if return_value == 0:
+      cmd = ['docker', 'rm', container_name]
+      with PopenRedirect(LoggerFile(self.logger.debug)) as fid:
+        Popen(cmd, stdout=fid.stdout, stderr=STDOUT).wait(0)
     else:
-      print 'Build failed on %s. Would you like to enter a debug session? (y/n)' % container_name
       if self.args.debug_on_fail is None and not self.args.bash:
-        r = str(raw_input())
-        r = r.lower().startswith('y')
+        self.logger.critical('Build failed on %s. Would you like to enter a debug session? (y/n)', container_name)
+        resume = str(raw_input())
+        resume = resume.lower().startswith('y')
       else:
-        r = self.args.debug_on_fail
+        self.logger.critical('Build failed on %s', container_name)
+        resume = self.args.debug_on_fail
       
-      if r:
-        Popen(['docker', 'commit', container_name, container_name+'_debug']).wait(0)
-        Popen(['docker', 'run', '-it', 
+      if resume:
+        cmd = ['docker', 'commit', container_name, container_name+'_debug']
+        self.logger.debug(cmd_to_str(cmd))
+        with PopenRedirect(LoggerFile(self.logger.debug)) as fid:
+          return_value = Popen(cmd, stdout=fid.stdout, stderr=STDOUT).wait()
+        
+        cmd = ['docker', 'run', '-it', 
                '-v', '%s:/home/dev/rpmbuild/RPMS' % self.rpm_dir,
                '-v', '%s:/home/dev/rpmbuild/SRPMS' % self.srpm_dir,
                '-v', '%s:/home/dev/rpmbuild/SPECS/%s' % (self.spec_path, self.spec_basename),
-               '--rm', container_name+'_debug', 'bash']).wait(0)
+               '--rm', container_name+'_debug', 'bash']
+        self.logger.debug(cmd_to_str(cmd))
+        Popen(cmd).wait(0)
       raise Exception('Build failed, try commiting %s and running it to debug' % container_name)
 
-    
-  def main(self):
 
+  def main(self, setupLogging=True):
     image_name = 'dockrpm_%s' % self.spec_name
     container_name = image_name +'_build'
 
@@ -521,7 +581,7 @@ class DockRpm(object):
     if not self.args.skip_run:
       self.run_docker_image(image_name, container_name)
 
-    print 'Build success on %s' % self.spec_path
+    self.logger.info('Build success on %s' % self.spec_path)
 
 if __name__=='__main__':
   DockRpm().main()
