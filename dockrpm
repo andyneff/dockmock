@@ -106,7 +106,7 @@ def parser():
      help='Args for rpmbuild, not sent to recursive builds')
   aa('--without', default=[], action='append',
      help='Args for rpmbuild, not sent to recursive builds')
-  aa('--verbose', '-v', default=4, type=int, choices=range(6),
+  aa('--verbose', '-v', default=4, type=int, choices=range(6), nargs='?', const=5,
      help='''Logging level between 0 and 5, 5 is most verbose, 0 is none 
              (no output). Default: 4''')
 
@@ -129,8 +129,7 @@ class DockRpm(object):
     
     (self.args, self.extra_args) = self.parser.parse_known_args(args)
     
-    self.rpmbuild_args = ['-D', '"dist .el7"'] + \
-                         [entry for value in self.args.without 
+    self.rpmbuild_args = [entry for value in self.args.without 
                                 for entry in ['--without', value]] + \
                          [entry for value in getattr(self.args, 'with')
                                 for entry in ['--with', value]]
@@ -162,14 +161,24 @@ class DockRpm(object):
     self.dockerfile = os.path.join(self.spec_dir, 'Dockerfile_build')
     self.dockerfile_dep_check = os.path.join(self.spec_dir, 
                                              'Dockerfile_dep_check')
+
+    self.curl_script_path = os.path.join(self.spec_dir, 'curl.bsh')
+    self.rpmmacros_path = os.path.join(self.spec_dir, 'rpmmacros')
+
     
     self.logger = logging.getLogger(__name__)
     self.log_level = (6-self.args.verbose)*10 #(10-60)
 
-    assert not os.path.samefile(self.spec_dir, self.root_dir), \
-        'If the spec dir and the root dir are the same, bad things can happen'
-    assert not os.path.samefile(self.spec_dir, self.code_dir), \
-        'If the spec dir and the code dir are the same, bad things can happen'
+    if not os.path.exists(self.spec_dir):
+      mkpath(self.spec_dir)
+
+    if os.path.samefile(self.spec_dir, self.root_dir):
+      self.logger.critical('If the spec dir and the root dir are the same, bad things can happen')
+      exit(1)
+    if os.path.samefile(self.spec_dir, self.code_dir):
+      self.logger.critical('If the spec dir and the code dir are the same, bad things can happen')
+      exit(1)
+
     
   def get_rpm_names_from_specfile(self, spec_path):
     cmd = ['rpm', '-q', '-D', '_sourcedir %s' % self.source_dir, 
@@ -250,7 +259,7 @@ class DockRpm(object):
                       self.spec_path)
     mkpath(os.path.dirname(self.spec_path))
     with open(self.spec_path, 'w') as fid:
-      fid.writelines(['Name: %s' % os.path.splitext(os.path.basename(self.spec_path))[0],
+      fid.writelines(['Name: %s\n' % os.path.splitext(os.path.basename(self.spec_path))[0],
                       "License: None\n",
                       "Group: Misc\n",
                       "Summary: Fake rpm\n",
@@ -302,7 +311,7 @@ class DockRpm(object):
 
     # Prep extra files
     if self.args.fake:
-      create_fake()
+      self.create_fake()
 
     mkpath(self.rpm_dir)
     mkpath(self.srpm_dir)
@@ -399,7 +408,7 @@ class DockRpm(object):
     except:
       self.logger.critical('Error running dep_check. To run the docker, try:')
       self.logger.info('(echo %s; cat %s ) | %s' % \
-            (cmd_to_str(self.rpmbuild_args[2:]), self.spec_path, 
+            (cmd_to_str(self.rpmbuild_args), self.spec_path, 
              cmd_to_str(cmd)))
       self.logger.info('To debug, try:')
       cmd = cmd[0:2] + ['-t', '-v', '%s:/root/rpmbuild/SPECS/rpm_preparse.spec' % self.spec_path] + cmd[2:] + ['bash']
@@ -457,16 +466,6 @@ class DockRpm(object):
         else:
           raise Exception('Unsupported version of CUDA %s' % cuda_version)
 
-    if self.args.bash:
-      docker_env['DOCKRPM_RUN'] = '''echo "When you are ready, run:" && \
-                                     echo 'rpmbuild -ba -D "dist .el7" /home/dev/rpmbuild/SPECS/%s' && \
-                                     bash''' % self.spec_basename
-    else:
-      docker_env['DOCKRPM_RUN'] = \
-          '''rpmbuild -ba -D "dist .el7" /home/dev/rpmbuild/SPECS/%s && \
-             createrepo ~/rpmbuild/RPMS && \
-             createrepo ~/rpmbuild/SRPMS''' % self.spec_basename
-
     docker_env['SPEC_BASENAME'] = self.spec_basename
     docker_env['USER_UID'] = str(os.getuid())
     docker_env['USER_GID'] = str(os.getgid())
@@ -475,6 +474,12 @@ class DockRpm(object):
     #docker+ the Dockerfile
     self.dockerp(os.path.join(self.code_dir, 'Dockerfile'), self.dockerfile,
                  docker_env)
+
+    #create rpmmacros files if it doesn't exist
+    if not os.path.exists(self.rpmmacros_path):
+      self.logger.info('No rpmmacros files found. Creating basic rpmmacros file')
+      with open(self.rpmmacros_path, 'w') as fid:
+        fid.write('%dist .el7\n')
 
     #Create curl.bsh file
     with open(self.spec_path, 'r') as fid:
@@ -489,10 +494,10 @@ class DockRpm(object):
     curl_lines = map(lambda x:x[len('dry run: '):], curl_lines)
     curl_lines.sort()
     pid.wait(0)
-    with open(os.path.join(self.spec_dir, 'curl.bsh'), 'w') as fid:
+    with open(self.curl_script_path, 'w') as fid:
       fid.write('set -eu\n')
       fid.write('\n'.join(curl_lines))
-    os.chmod(os.path.join(self.spec_dir, 'curl.bsh'), 0755)
+    os.chmod(self.curl_script_path, 0755)
 
 
     cmd = ['docker', 'build', '-f', self.dockerfile, '-t', image_name, 
@@ -521,7 +526,9 @@ class DockRpm(object):
       docker_options += ['-v', '%s:/gpg:ro' % self.args.mount_gpg]
     if self.args.bash:
       #if interactive bash session then I want tty hooked up and SPEC file synced
-      docker_options += ['-t', '-v', '%s:/home/dev/rpmbuild/SPECS/%s' % (self.spec_path, self.spec_basename)]
+      docker_options += ['-t', '-v', '%s:/home/dev/rpmbuild/SPECS/%s' % \
+                                     (self.spec_path, self.spec_basename),
+                         '-e', 'DOCKRPM_BASH=1']
     elif self.args.skip_build:
       #if skip build, skip build is used to speed things up, but  I want to at
       #least make sure the spec file is up-to-date. read only to prevent accidents
@@ -546,7 +553,11 @@ class DockRpm(object):
         Popen(cmd, stdout=fid.stdout, stderr=STDOUT).wait(0)
     else:
       if self.args.debug_on_fail is None and not self.args.bash:
-        self.logger.critical('Build failed on %s. Would you like to enter a debug session? (y/n)', container_name)
+        error_message = 'Build failed on %s. Would you like to enter a debug session? (y/n)' % container_name
+        if self.log_level <= logging.CRITICAL:
+          self.logger.critical(error_message)
+        else:
+          print(error_message)
         resume = str(raw_input())
         resume = resume.lower().startswith('y')
       else:
@@ -554,7 +565,8 @@ class DockRpm(object):
         resume = self.args.debug_on_fail
       
       if resume:
-        cmd = ['docker', 'commit', container_name, container_name+'_debug']
+        cmd = ['docker', 'commit', '-c', 'ENV DOCKRPM_DEBUG=1 DOCKRPM_BASH=1',
+               container_name, container_name+'_debug']
         self.logger.debug(cmd_to_str(cmd))
         with PopenRedirect(LoggerFile(self.logger.debug)) as fid:
           return_value = Popen(cmd, stdout=fid.stdout, stderr=STDOUT).wait()
@@ -563,7 +575,7 @@ class DockRpm(object):
                '-v', '%s:/home/dev/rpmbuild/RPMS' % self.rpm_dir,
                '-v', '%s:/home/dev/rpmbuild/SRPMS' % self.srpm_dir,
                '-v', '%s:/home/dev/rpmbuild/SPECS/%s' % (self.spec_path, self.spec_basename),
-               '--rm', container_name+'_debug', 'bash']
+               '--rm', container_name+'_debug']
         self.logger.debug(cmd_to_str(cmd))
         Popen(cmd).wait(0)
       raise Exception('Build failed, try commiting %s and running it to debug' % container_name)

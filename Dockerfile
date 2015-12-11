@@ -65,20 +65,35 @@ RUN groupmod -g [{USER_GID:1500}] dev && \
 
 USER dev
 
+ENV DOCKRPM_DEBUG=0 DOCKRPM_BASH=0
+
+COPY rpmmacros /home/dev/.rpmmacros
 COPY source /home/dev/rpmbuild/SOURCES
 COPY [{SPEC_BASENAME}] /home/dev/rpmbuild/SPECS/
 
-CMD sudo yum clean --disablerepo=* --enablerepo=rpmdocker metadata && \
-    srpm_name=$(rpmbuild -bs /home/dev/rpmbuild/SPECS/[{SPEC_BASENAME}] \
-        -D "_srcrpmdir /tmp" [{RPMBUILD_ARGS}] | \grep "^Wrote: " | \
-        sed 's/Wrote: \(.*\)/\1/') && \
-    srpm_name2=$(echo $srpm_name | sed 's|nosrc|src|') && \
-    if [ "$srpm_name" != "$srpm_name2" ]; then \
-      mv $srpm_name $srpm_name2; \
+
+CMD if [ "${DOCKRPM_DEBUG}" == "0" ]; then \
+      sudo yum clean --disablerepo=* --enablerepo=rpmdocker metadata && \
+      srpm_name=$(rpmbuild -bs /home/dev/rpmbuild/SPECS/[{SPEC_BASENAME}] \
+          -D "_srcrpmdir /tmp" [{RPMBUILD_ARGS}] | \grep "^Wrote: " | \
+          sed 's/Wrote: \(.*\)/\1/') && \
+      srpm_name2=$(echo $srpm_name | sed 's|nosrc|src|') && \
+      if [ "$srpm_name" != "$srpm_name2" ]; then \
+        mv $srpm_name $srpm_name2; \
+      fi && \
+      #srpm_name=$(rpmbuild -bs /home/dev/rpmbuild/SPECS/[{SPEC_BASENAME}] [{RPMBUILD_ARGS}] | \grep "^Wrote: " | sed 's/Wrote: \(.*\)/\1/') && \
+      #Thank you https://bugzilla.redhat.com/show_bug.cgi?id=1166126 :(
+      sudo yum-builddep -y ${srpm_name2} ; \
     fi && \
-    #srpm_name=$(rpmbuild -bs /home/dev/rpmbuild/SPECS/[{SPEC_BASENAME}] [{RPMBUILD_ARGS}] | \grep "^Wrote: " | sed 's/Wrote: \(.*\)/\1/') && \
-    #Thank you https://bugzilla.redhat.com/show_bug.cgi?id=1166126 :(
-    sudo yum-builddep -y ${srpm_name2} && \
-    [{DOCKRPM_RUN:bash}]
+    if [ "${DOCKRPM_BASH}" == "1" ]; then \
+      echo "When you are ready, run:" && \
+      echo "rpmbuild -ba /home/dev/rpmbuild/SPECS/[{SPEC_BASENAME}]" && \
+      bash; \
+    else \
+      rpmbuild -ba /home/dev/rpmbuild/SPECS/[{SPEC_BASENAME}] && \
+      createrepo ~/rpmbuild/RPMS && \
+      createrepo ~/rpmbuild/SRPMS; \
+    fi
+    
 #Run yum-builddep, only this time it should catch all the local rpms that 
 #weren't installed in the last yum install command
