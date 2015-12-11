@@ -534,8 +534,11 @@ class DockRpm(object):
            '--name', container_name] + docker_options + self.extra_args + \
            [image_name]
     self.logger.debug(cmd_to_str(cmd))
-    with PopenRedirect(LoggerFile(self.logger.debug)) as fid:
-      return_value = Popen(cmd, stdout=fid.stdout, stderr=STDOUT).wait()
+    if self.args.bash:
+      return_value = Popen(cmd).wait()
+    else:
+      with PopenRedirect(LoggerFile(self.logger.debug)) as fid:
+        return_value = Popen(cmd, stdout=fid.stdout, stderr=STDOUT).wait()
 
     if return_value == 0:
       cmd = ['docker', 'rm', container_name]
