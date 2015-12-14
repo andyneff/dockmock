@@ -84,8 +84,6 @@ def parser():
   aa('--fake-version', default='1.0.0', help="Fake version number")
   aa('--fake-arch', default=None, help="Fake arch")
   aa('--dep-check', default=True, type='bool',
-     help='Skip dependency checking')
-  aa('--docker-dep-check', default=False, action='store_true',
      help='''Check dependencies in a docker. Necessary to be run at least once 
              to create deps.txt, unless you create it manually''')
   aa('--root-dir', default=None, help='Change root dir')
@@ -115,6 +113,7 @@ def parser():
   aa('--gid', default=None, type=int,
      help='''GID for the user in the docker. Default is to use the users
              GID or 50 for windows''')
+  aa('--log-dir', default=os.getcwd())
 
   return my_parser
 
@@ -196,6 +195,7 @@ class DockRpm(object):
 
     self.logger = logging.getLogger(__name__)
     self.log_level = (6-self.args.verbose)*10 #(10-60)
+    self.log_dir = self.args.log_dir
 
     #MINGW fun
     #There are THREE paths passed to docker -v flags, they need to be 
@@ -238,8 +238,16 @@ class DockRpm(object):
 
     
   def get_rpm_names_from_specfile(self, spec_path):
+    #BAD idea, the for loop needs to be moved in the docker, this is too inefficient
+    #cmd = ['rpm', '-q', '--qf', '%{NAME}\t%{VERSION}\n', '--specfile', 
+    #       '/home/dev/rpmbuild/SPECS/rpm.spec']
+    #docker_args = ['--rm',
+    #               '-v', '%s:/home/dev/rpmbuild/SPECS/rpm.spec' % self.spec_path_docker,
+    #               '-v', '%s:/home/dev/rpmbuild/SOURCES' % self.source_dir_docker]
+    #pid = self.run_other_piped(cmd, docker_args)
     cmd = ['rpm', '-q', '-D', '_sourcedir %s' % self.source_dir, 
            '--qf', '%{NAME}\t%{VERSION}\n', '--specfile', spec_path]
+    self.logger.debug(cmd_to_str(cmd))
     pid = Popen(cmd, stdout=PIPE)
     stdout = pid.communicate()[0][:-1] #get rid of trailing newline
     pid.wait(0)
@@ -262,6 +270,8 @@ class DockRpm(object):
     local_pacakge_names = [local_pacakge_name] + local_pacakge_names
     #Add it without the suffix, in the case that the suffix is already added in
     #the spec file. This is the case I want supported in the end
+
+    docker_args = ['-v', '%s:/home/dev/spec' % self.specs_dir]
 
     for spec in glob(os.path.join(self.specs_dir, '*', '*.spec')):
       rpm_names = self.get_rpm_names_from_specfile(spec)
@@ -353,23 +363,24 @@ class DockRpm(object):
 
     return output_file
     
-  def setup(self):
+  def setup(self, setup_logging=True):
 
-    if self.log_level <= logging.CRITICAL:
-      sh = logging.StreamHandler()
-      #fh = logging.FileHandler('build.log')
-      sh.setLevel(self.log_level)
-      #fh.setLevel(logging.DEBUG)
-      formatter = logging.Formatter('%(asctime)s : %(levelname)s - %(message)s')
-      sh.setFormatter(formatter)
-      #fh.setFormatter(formatter)
-      self.logger.addHandler(sh)
-      #logger.addHandler(fh)
-      self.logger.setLevel(self.log_level)
-    else:
-      if not self.logger.handlers:
-        #Suppress any "no handler available" message
-        self.logger.addHandler(logging.NullHandler())
+    if setup_logging:
+      if self.log_level <= logging.CRITICAL:
+        sh = logging.StreamHandler()
+        fh = logging.FileHandler(os.path.join(self.log_dir, 'dockrpm.log'))
+        sh.setLevel(self.log_level)
+        fh.setLevel(logging.DEBUG)
+        formatter = logging.Formatter('%(asctime)s : %(levelname)s - %(message)s')
+        sh.setFormatter(formatter)
+        fh.setFormatter(formatter)
+        self.logger.addHandler(sh)
+        self.logger.addHandler(fh)
+        self.logger.setLevel(logging.DEBUG)
+      else:
+        if not self.logger.handlers:
+          #Suppress any "no handler available" message
+          self.logger.addHandler(logging.NullHandler())
 
     # Prep extra files
     if self.args.fake:
@@ -469,7 +480,7 @@ class DockRpm(object):
           #arg list instead
           dep_args = [match] + argparse.filter_args(self.args, None, 
                                                     ['spec', 'with', 'without'])
-          DockRpm(dep_args).main()
+          DockRpm(dep_args).main(setup_logging=False)
         else:
           raise Exception('No match for package %s' % missing_package)
     except:
@@ -525,6 +536,20 @@ class DockRpm(object):
     self.logger.debug(cmd_to_str(cmd))
     return Popen(cmd, stdin=PIPE, stdout=PIPE)
 
+  def run_other(self, cmd, docker_args=[]):
+    self.build_other_image()
+    cmd = ['docker', 'run'] + docker_args + \
+          [self.dockerfile_other_imagename] + cmd
+    self.logger.debug(cmd_to_str(cmd))
+    with PopenRedirect(LoggerFile(self.logger.debug)) as fid:
+      return Popen(cmd, stdout=fid.stdout, stderr=STDOUT)
+
+  def run_other_piped(self, cmd, docker_args=[]):
+    self.build_other_image()
+    cmd = ['docker', 'run'] + docker_args + \
+          [self.dockerfile_other_imagename] + cmd
+    self.logger.debug(cmd_to_str(cmd))
+    return Popen(cmd, stdin=PIPE, stdout=PIPE)
 
   def check_dependencies(self):
     
@@ -688,11 +713,11 @@ class DockRpm(object):
       raise Exception('Build failed, try commiting %s and running it to debug' % container_name)
 
 
-  def main(self, setupLogging=True):
+  def main(self, setup_logging=True):
     image_name = 'dockrpm_%s' % self.spec_name
     container_name = image_name +'_build'
 
-    self.setup()
+    self.setup(setup_logging)
 
     if self.args.dep_check:
       self.check_dependencies()

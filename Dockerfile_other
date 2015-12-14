@@ -7,6 +7,7 @@ RUN mkdir -p $HOME/rpmbuild/{RPMS,SRPMS,SOURCES,SPECS}
 COPY repos /repos
 COPY gpg /gpg
 
+#This isn't needed? Remove it!
 RUN printf '[rpmdocker]\nname=rpmdocker\nbaseurl=file:///home/dev/rpmbuild/RPMS\ngpgcheck=0\nenabled=1\nmetadata_expire=0\nmetadata_expire_filter=never\n' > \
            /etc/yum.repos.d/rpmdocker.repo && \
     (cp -n /repos/* /etc/yum.repos.d/ || :) && \
