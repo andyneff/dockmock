@@ -42,8 +42,8 @@ COPY repos /repos
 COPY gpg /gpg
 COPY deps.txt /home/dev/rpmbuild/deps.txt
 
-RUN cp -n /repos/* /etc/yum.repos.d/ && \
-    cp -n /gpg/* /etc/pki/rpm-gpg/ && \
+RUN (cp -n /repos/* /etc/yum.repos.d/ || :) && \
+    (cp -n /gpg/* /etc/pki/rpm-gpg/ || :) && \
     if [ -s /home/dev/rpmbuild/deps.txt ]; then \
       yum install [{ENABLE_LOCAL:--disablerepo=rpmdocker}] -y $(cat /home/dev/rpmbuild/deps.txt) || :; \
     fi
@@ -53,13 +53,14 @@ RUN cp -n /repos/* /etc/yum.repos.d/ && \
 
 COPY curl.bsh /home/dev/rpmbuild/curl.bsh
 RUN cd /home/dev/rpmbuild/SOURCES && \
+    chmod 755 /home/dev/rpmbuild/curl.bsh && sync && \
     /home/dev/rpmbuild/curl.bsh
 #A more manual version of the following, WITHOUT depending on the spec file directly
 #My hope is that I can change the spec file, and as long as curl.bsh does not 
 #change, neither with the sha :)
 
-RUN groupmod -g [{USER_GID:1500}] dev && \
-    usermod -u [{USER_UID:1500}] dev && \
+RUN groupmod -g [{USER_GID:50}] dev && \
+    usermod -u [{USER_UID:1000}] dev && \
     chown -R dev:dev /home/dev
 #d+ to specific #
 
@@ -91,8 +92,12 @@ CMD if [ "${DOCKRPM_DEBUG}" == "0" ]; then \
       bash; \
     else \
       rpmbuild -ba /home/dev/rpmbuild/SPECS/[{SPEC_BASENAME}] && \
-      createrepo ~/rpmbuild/RPMS && \
-      createrepo ~/rpmbuild/SRPMS; \
+      createrepo --basedir ~/rpmbuild/RPMS /tmp && \
+      rm -rvf ~/rpmbuild/RPMS/repodata && \
+      mv /tmp/repodata ~/rpmbuild/RPMS/ && \
+      createrepo --basedir ~/rpmbuild/SRPMS /tmp && \
+      rm -rvf ~/rpmbuild/SRPMS/repodata && \
+      mv /tmp/repodata ~/rpmbuild/SRPMS/; \
     fi
     
 #Run yum-builddep, only this time it should catch all the local rpms that 

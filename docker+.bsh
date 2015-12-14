@@ -11,17 +11,17 @@ fi
 #CUR_DIR=$(dirname ${BASH_SOURCE[0]})
 CUR_DIR=`pwd`
 
+shopt -s nocasematch
+#Fot git for windows 1.x running bash 3.1, this is the best option for the 
+#SOURCE match below. Otherwise a subshell of tr, awk, grep, etc... must be 
+#called for everyline, and that's REALLY slow. This is fast at least
+
 for FILE in "${FILES[@]}"; do
-  if [ "${FILE}" == "-" ]; then
-    FILE=/dev/stdin
-  fi
+  #The perl magic comes from https://gist.github.com/niclashoyer/8146033
+  cat ${FILE} | perl -p -e 's/\[\{([^}:]+)(:([^}]+))?\}\]/defined $ENV{$1} ? $ENV{$1} : $3/eg' | \
   while IFS='' read -r LINE || [ -n "${LINE}" ]; do
-
-    #https://gist.github.com/niclashoyer/8146033
-    LINE=$(echo "$LINE" | perl -p -e 's/\[\{([^}:]+)(:([^}]+))?\}\]/defined $ENV{$1} ? $ENV{$1} : $3/eg')
-
     #My SOURCE substitution
-    if echo $LINE | grep -q ^SOURCE; then
+    if [[ ${LINE} == SOURCE* ]]; then
       SOURCE=$(echo "${LINE}" | sed -E 's|^SOURCE[ ]+(.*)|\1|')
       if [ "${SOURCE:0:1}" != "/" ] && [ -f "${CUR_DIR}/${SOURCE}" ]; then
         SOURCE="${CUR_DIR}/${SOURCE}"
@@ -34,5 +34,5 @@ for FILE in "${FILES[@]}"; do
     else
       echo "${LINE}"
     fi
-  done < ${FILE}
+  done
 done
