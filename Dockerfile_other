@@ -7,12 +7,12 @@ RUN mkdir -p $HOME/rpmbuild/{RPMS,SRPMS,SOURCES,SPECS}
 COPY repos /repos
 COPY gpg /gpg
 
-RUN printf '[rpmdocker]\nname=rpmdocker\nbaseurl=file:///home/dev/rpmbuild/RPMS\ngpgcheck=0\nenabled=1\n' > \
+RUN printf '[rpmdocker]\nname=rpmdocker\nbaseurl=file:///home/dev/rpmbuild/RPMS\ngpgcheck=0\nenabled=1\nmetadata_expire=0\nmetadata_expire_filter=never\n' > \
            /etc/yum.repos.d/rpmdocker.repo && \
     (cp -n /repos/* /etc/yum.repos.d/ || :) && \
     (cp -n /gpg/* /etc/pki/rpm-gpg/ || :)
 
-RUN groupadd -g [{USER_GID:50}] dev && \
+RUN (groupadd -g [{USER_GID:50}] dev || :)&& \
     useradd -u [{USER_UID:1000}] -g [{USER_GID:50}] dev && \
     echo "dev ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers && \
     sed -i '/requiretty/d' /etc/sudoers && \
@@ -21,10 +21,10 @@ RUN groupadd -g [{USER_GID:50}] dev && \
 USER dev
 
 CMD if [ "${CREATEREPO}" == "1" ]; then\
-      createrepo --basedir ~/rpmbuild/RPMS /tmp && \
+      createrepo ~/rpmbuild/RPMS -o /tmp && \
       rm -rvf ~/rpmbuild/RPMS/repodata && \
       mv /tmp/repodata ~/rpmbuild/RPMS/ && \
-      createrepo --basedir ~/rpmbuild/SRPMS /tmp && \
+      createrepo ~/rpmbuild/SRPMS -o /tmp && \
       rm -rvf ~/rpmbuild/SRPMS/repodata && \
       mv /tmp/repodata ~/rpmbuild/SRPMS/; \
     fi && \

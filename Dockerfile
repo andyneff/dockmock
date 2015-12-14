@@ -59,7 +59,7 @@ RUN cd /home/dev/rpmbuild/SOURCES && \
 #My hope is that I can change the spec file, and as long as curl.bsh does not 
 #change, neither with the sha :)
 
-RUN groupmod -g [{USER_GID:50}] dev && \
+RUN (groupmod -g [{USER_GID:50}] dev || usermod -g [{USER_GID:50}] dev) && \
     usermod -u [{USER_UID:1000}] dev && \
     chown -R dev:dev /home/dev
 #d+ to specific #
@@ -92,10 +92,10 @@ CMD if [ "${DOCKRPM_DEBUG}" == "0" ]; then \
       bash; \
     else \
       rpmbuild -ba /home/dev/rpmbuild/SPECS/[{SPEC_BASENAME}] && \
-      createrepo --basedir ~/rpmbuild/RPMS /tmp && \
+      createrepo ~/rpmbuild/RPMS -o /tmp && \
       rm -rvf ~/rpmbuild/RPMS/repodata && \
       mv /tmp/repodata ~/rpmbuild/RPMS/ && \
-      createrepo --basedir ~/rpmbuild/SRPMS /tmp && \
+      createrepo ~/rpmbuild/SRPMS -o /tmp && \
       rm -rvf ~/rpmbuild/SRPMS/repodata && \
       mv /tmp/repodata ~/rpmbuild/SRPMS/; \
     fi
