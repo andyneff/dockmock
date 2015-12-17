@@ -1,0 +1,25 @@
+FROM centos:7
+
+RUN yum install -y createrepo rpmdevtools
+
+RUN mkdir -p $HOME/rpmbuild/{RPMS,SRPMS,SOURCES,SPECS}
+
+RUN (groupadd -g [{USER_GID:50}] dev || :)&& \
+    useradd -u [{USER_UID:1000}] -g [{USER_GID:50}] dev && \
+    echo "dev ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers && \
+    sed -i '/requiretty/d' /etc/sudoers && \
+    mkdir -p ~dev/rpmbuild/{SPECS,BUILD,BUILDROOT,SPECS,SOURCES,RPMS,SRPMS}
+
+USER dev
+
+CMD if [ "${CREATEREPO}" == "1" ]; then\
+      createrepo ~/rpmbuild/RPMS -o /tmp && \
+      rm -rvf ~/rpmbuild/RPMS/repodata && \
+      mv /tmp/repodata ~/rpmbuild/RPMS/ && \
+      createrepo ~/rpmbuild/SRPMS -o /tmp && \
+      rm -rvf ~/rpmbuild/SRPMS/repodata && \
+      mv /tmp/repodata ~/rpmbuild/SRPMS/; \
+    fi && \
+    if [ "${SPECTOOL}" == "1" ]; then \
+      spectool -g -n -A -; \
+    fi

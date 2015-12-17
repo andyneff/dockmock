@@ -2,7 +2,7 @@ SHELL := /usr/bin/env bash
 
 FIX_DEP_ARG = --assumeno
 
-ARGS = --debug_on_fail=false
+ARGS = --debug-on-fail=false
 
 SPECS = $(wildcard specs/*/*.spec)
 PHONY_TARGETS = all install clean rpmdocker.repo cache purge repos check_dep fix_dep build
@@ -30,6 +30,10 @@ build:
 	  $(DR) ./dockrpm $(ARGS) $${target} || break; \
 	done
 
+yum:
+	$(eval RECURSE := 1)
+	$(DR) yum install --enablerepo rpmdocker $(filter-out $(PHONY_TARGETS),$(MAKECMDGOALS))
+
 %:
 	@if [ "$(RECURSE)" == 0 ]; then $(MAKE) RECURSE=1 build $@; fi
 
@@ -42,6 +46,8 @@ rpmdocker.repo:
 	echo "baseurl=file://`pwd`/rpms" >> rpmdocker.repo
 	echo "gpgcheck=0" >> rpmdocker.repo
 	echo "enabled=0" >> rpmdocker.repo
+	echo "metadata_expire=0" >> rpmdocker.repo
+	echo "metadata_expire_filter=never" >> rpmdocker.repo
 
 install: rpmdocker.repo
 	cp rpmdocker.repo /etc/yum.repos.d/

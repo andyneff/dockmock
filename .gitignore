@@ -2,3 +2,4 @@ rpms
 srpms
 *.pyc
 rpmdocker.repo
+dockrpm.log
