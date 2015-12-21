@@ -53,8 +53,20 @@ def dependencies_from_yum_builddep(output):
   dependencies.sort()
   return dependencies
 
+def default_uid():
+  if os.name=='nt':
+    return 1000 #Default in boot2docker
+  else:
+    return os.getuid()
+
+def default_gid():
+  if os.name=='nt':
+    return 50 #Default in boot2docker
+  else:
+    return os.getgid()
+
 def parser():
-  my_parser = argparse.ArgumentParser()
+  my_parser = argparse.ArgumentParser(fromfile_prefix_chars='@')
   aa = my_parser.add_argument
   aa('spec',
      help='''Name of spec. Can be just myfile or path (./specs/myfile.spec) or
@@ -70,14 +82,13 @@ def parser():
   aa('--mount-repo', default=None, help='emptystring to disable')
   aa('--mount-gpg', default=None, help='empty string to disable')
   aa('--bash', default=False, action='store_true', 
-     help='Run bash instead of rpmbuild')
+     help='Run bash instead of rpmbuild. Default %(default)s')
   aa('--nvcc', default=find_nvcc())
   aa('--cuda-version')
   aa('--nvidia-version')
   aa('--debug-on-fail', default=None, type='bool', const=True, nargs='?',
      help='''Commit and enter a container when the rpmbuild step fails. Default
      is to be prompted to enter''')
-  #aa('--quiet', default=False, type='bool', const=True, nargs='?')
   aa('--skip-build', default=False, type='bool', const=True, nargs='?')
   aa('--skip-run', default=False, type='bool', const=True, nargs='?')
   aa('--with', default=[], action='append', 
@@ -86,13 +97,13 @@ def parser():
      help='Args for rpmbuild, not sent to recursive builds')
   aa('--verbose', '-v', default=4, type=int, choices=range(6), nargs='?', const=5,
      help='''Logging level between 0 and 5, 5 is most verbose, 0 is none 
-             (no output). Default: 4''')
-  aa('--uid', default=None, type=int,
+             (no output). Default: %(default)d''')
+  aa('--uid', default=default_uid(), type=int,
      help='''UID for the user in the docker. Default is to use the users
-             UID or 1000 for windows''')
-  aa('--gid', default=None, type=int,
+             UID or 1000 for windows. Default: %(default)d''')
+  aa('--gid', default=default_gid(), type=int,
      help='''GID for the user in the docker. Default is to use the users
-             GID or 50 for windows''')
+             GID or 50 for windows. Default: %(default)d''')
   aa('--log-dir', default=os.getcwd())
 
   return my_parser
@@ -102,7 +113,8 @@ def cmd_to_str(cmd):
 
 def same_file(filename1, filename2):
   if os.name == 'nt':
-    return False #I can't check ;(
+    return os.path.abspath(filename1)==os.path.abspath(filename2)
+    #I can't REALLY check in windows ;(
   else:
     return os.path.samefile(filename1, filename2)
 
@@ -121,7 +133,6 @@ class DockRpm(object):
   def __init__(self, args=None):
     self.argv = args
     self.parser = parser()
-    
     (self.args, self.extra_args) = self.parser.parse_known_args(args)
     
     self.rpmbuild_args = [entry for value in self.args.without 
@@ -200,20 +211,6 @@ class DockRpm(object):
 
     if not os.path.exists(self.spec_dir):
       mkpath(self.spec_dir)
-
-    if self.args.uid is not None:
-      self.uid = self.args.uid
-    elif os.name=='nt':
-      self.uid = 1000 #Default in boot2docker
-    else:
-      self.uid = os.getuid()
-
-    if self.args.gid is not None:
-      self.gid = self.args.gid
-    elif os.name=='nt':
-      self.gid = 50 #Default in boot2docker
-    else:
-      self.gid = os.getgid()
 
     if same_file(self.spec_dir, self.root_dir):
       self.logger.critical('If the spec dir and the root dir are the same, bad things can happen')
@@ -393,6 +390,7 @@ class DockRpm(object):
       cmd = ['docker', 'run', '-i', '--rm',
              '-v', '%s:/home/dev/rpmbuild/RPMS' % self.rpm_dir_docker,
              '-v', '%s:/home/dev/rpmbuild/SRPMS' % self.srpm_dir_docker,
+             '-v', '%s:/source' % self.source_dir_docker,
              image_name]
       self.logger.debug(cmd_to_str(cmd))
       pid = Popen(cmd, stdin=PIPE, stdout=PIPE)
