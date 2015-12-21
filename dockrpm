@@ -448,7 +448,7 @@ class DockRpm(object):
 
     self.logger.info('Building other docker')
 
-    docker_env = {'USER_UID': str(self.uid), 'USER_GID': str(self.gid)}
+    docker_env = {'USER_UID': str(self.args.uid), 'USER_GID': str(self.args.gid)}
 
     self.dockerp(os.path.join(self.code_dir, 'Dockerfile_other'),
                  self.dockerfile_other,
@@ -471,10 +471,17 @@ class DockRpm(object):
     with PopenRedirect(LoggerFile(self.logger.debug)) as fid:
       Popen(cmd, stdout=fid.stdout, stderr=STDOUT).wait(0)
 
-  def run_spectool(self):
+  def run_spectool(self, withs=[], withouts=[]):
     self.build_other_image()
-    cmd = ['docker', 'run', '-i', '-e', 'SPECTOOL=1',
-           '-v', '%s:/home/dev/rpmbuild/SOURCES' % self.source_dir_docker,
+    with_args = []
+    for w in withs:
+      with_args.append('-D "_with_%s 1"')
+    for w in withouts:
+      with_args.append('-D "_without_%s 1"')
+    with_args = ' '.join(with_args)
+
+    cmd = ['docker', 'run', '-i', '-e', 'SPECTOOL=1', '-e', with_args,
+           '-v', '%s:/home/dev/rpmbuild/SOURCES:ro' % self.source_dir_docker,
            self.dockerfile_other_imagename]
     self.logger.debug(cmd_to_str(cmd))
     return Popen(cmd, stdin=PIPE, stdout=PIPE)
@@ -542,8 +549,8 @@ class DockRpm(object):
           raise Exception('Unsupported version of CUDA %s' % cuda_version)
 
     docker_env['SPEC_BASENAME'] = self.spec_basename
-    docker_env['USER_UID'] = str(self.uid)
-    docker_env['USER_GID'] = str(self.gid)
+    docker_env['USER_UID'] = str(self.args.uid)
+    docker_env['USER_GID'] = str(self.args.gid)
     docker_env['RPMBUILD_ARGS'] = ' '.join(self.rpmbuild_args)
 
     #docker+ the Dockerfile
@@ -559,9 +566,8 @@ class DockRpm(object):
     #Create curl.bsh file
     with open(self.spec_path, 'r') as fid:
       spec_lines = fid.readlines()
-    spec_lines = filter(lambda x: not x.startswith('%include'), spec_lines)
 
-    pid = self.run_spectool()
+    pid = self.run_spectool(getattr(self.args, 'with'), self.args.without)
     #docker_args = ['-v', '%s:/home/dev/rpmbuild/SOURCES' % self.source_dir_docker]
     #cmd = ['spectool', '-g', '-n', '-A', '-']
     #pid = self.run_other_piped(cmd, docker_args)
