@@ -20,16 +20,22 @@ RUN yum makecache -y --disablerepo=rpmdocker && : [{CLEAR_CACHE:0}]
 #CMD cat - > /dev/shm/rpm.spec && yum-builddep --nogpgcheck --assumeno /dev/shm/rpm.spec
 
 COPY source /root/rpmbuild/SOURCES
+#This is REALLY only needed for common.inc or similar... Unfortunately there is
+#no way of knowing the difference between THAT and binary source files... Oh 
+#well. I will accept this inefficiency and carry on.
 
 CMD read rpmbuild_args && cat - > $HOME/rpmbuild/SPECS/rpm_preparse.spec && \
+    #Read the first line of stdin into rpmbuild_args, and the rest goes into the spec file
     set -o pipefail && \
+    #catch failing grep/seds... they shouldn't be, this helps with debug only, of course
     rpmspec -D "debug_package %{nil}" -P $HOME/rpmbuild/SPECS/rpm_preparse.spec > $HOME/rpmbuild/SPECS/rpm.spec && \
+    #parse the spec file, debug_package must be disabled or else two debug packages will be made, and fail
     spectool -g -n -A -C $HOME/rpmbuild/SOURCES $HOME/rpmbuild/SPECS/rpm.spec | \
       ( grep '^Getting' || : ) | sed 's/.* to \(.*\)/\1/' | \
         while IFS='' read -r filename || [ -n "${filename}" ]; do \
           truncate -s 20 "${filename}"; \
         done && \
-    #creating fake missing source files
+    #ask spectool which source/patch files are urls, and creating fake missing source files
     srpm_name=$(rpmbuild -bs [{RPMBUILD_ARGS}] $HOME/rpmbuild/SPECS/rpm.spec | \
           grep "^Wrote: " | sed 's/Wrote: \(.*\)/\1/') && \
     srpm_name2=$(echo $srpm_name | sed 's|nosrc|src|') && \
