@@ -66,7 +66,7 @@ def default_gid():
     return os.getgid()
 
 def parser():
-  my_parser = argparse.ArgumentParser()
+  my_parser = argparse.ArgumentParser(fromfile_prefix_chars='@')
   aa = my_parser.add_argument
   aa('spec',
      help='''Name of spec. Can be just myfile or path (./specs/myfile.spec) or
@@ -390,6 +390,7 @@ class DockRpm(object):
       cmd = ['docker', 'run', '-i', '--rm',
              '-v', '%s:/home/dev/rpmbuild/RPMS' % self.rpm_dir_docker,
              '-v', '%s:/home/dev/rpmbuild/SRPMS' % self.srpm_dir_docker,
+             '-v', '%s:/source' % self.source_dir_docker,
              image_name]
       self.logger.debug(cmd_to_str(cmd))
       pid = Popen(cmd, stdin=PIPE, stdout=PIPE)
