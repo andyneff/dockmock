@@ -181,7 +181,7 @@ class DockRpm(object):
     self.dockerfile_other = os.path.join(self.spec_dir, 
                                              'Dockerfile_other')
     self.dockerfile_other_built = False
-    self.dockerfile_other_imagename = 'dockrpm_other'
+    self.dockerfile_other_imagename = 'dockrpm_other_{}_{}'
 
     self.curl_script_path = os.path.join(self.spec_dir, 'curl.bsh')
     self.rpmmacros_path = os.path.join(self.spec_dir, 'rpmmacros')
@@ -457,6 +457,12 @@ class DockRpm(object):
       return
 
     self.logger.info('Building other docker')
+
+    self.dockerfile_other_imagename = \
+        self.dockerfile_other_imagename.format(self.args.uid, self.args.gid)
+    #This may not be the most elegant solution/place to put this code. But
+    #it can be called multiple times without error, and this makes the {} 
+    #feature optional
 
     docker_env = {'USER_UID': str(self.args.uid), 
                   'USER_GID': str(self.args.gid)}

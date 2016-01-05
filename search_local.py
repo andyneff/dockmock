@@ -35,6 +35,7 @@ def get_rpm_names_from_specfile(spec_path, source_dir):
   return map(lambda x:x.split('\t'), stdout.splitlines())
 
 def search_local(package_name, version_test=None, version=None, specs_dir='/specs', package_name_suffix='_local'):
+  #I think the package_name_suffix feature should be removed now...
   local_pacakge_name = package_name.split('-')
   local_pacakge_names = ['-'.join(local_pacakge_name[0:x] + 
                         [local_pacakge_name[x]+package_name_suffix] + 
