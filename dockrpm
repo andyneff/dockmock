@@ -181,7 +181,7 @@ class DockRpm(object):
     self.dockerfile_other = os.path.join(self.spec_dir, 
                                              'Dockerfile_other')
     self.dockerfile_other_built = False
-    self.dockerfile_other_imagename = 'dockrpm_%s_other' % self.spec_name
+    self.dockerfile_other_imagename = 'dockrpm_other'
 
     self.curl_script_path = os.path.join(self.spec_dir, 'curl.bsh')
     self.rpmmacros_path = os.path.join(self.spec_dir, 'rpmmacros')

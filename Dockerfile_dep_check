@@ -4,7 +4,6 @@ RUN yum install -y yum-utils rpmdevtools
 
 RUN mkdir -p $HOME/rpmbuild/{RPMS,SRPMS,SOURCES,SPECS}
 
-COPY deplist.py /deplist.py
 COPY repos /repos
 COPY gpg /gpg
 
@@ -24,6 +23,8 @@ COPY source /root/rpmbuild/SOURCES
 #This is REALLY only needed for common.inc or similar... Unfortunately there is
 #no way of knowing the difference between THAT and binary source files... Oh 
 #well. I will accept this inefficiency and carry on.
+
+COPY deplist.py /deplist.py
 
 CMD read rpmbuild_args && sed 's|%%|%%%%|g' > $HOME/rpmbuild/SPECS/rpm_preparse.spec && \
     #Read the first line of stdin into rpmbuild_args, and the rest goes into the spec file
