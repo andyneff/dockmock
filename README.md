@@ -12,6 +12,10 @@ Other OSes will not be an immediate focus, CUDA support will be
 
 ## Install ##
 
+Requires Docker 1.9 or newer when running windows because I mount individual 
+files in boot2docker, and at least from windows, this doesn't work until 1.9.
+In linux, it works back as far as at least 1.7.
+
 ```
 git clone ? .
 sudo make install

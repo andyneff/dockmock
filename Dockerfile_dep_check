@@ -4,6 +4,7 @@ RUN yum install -y yum-utils rpmdevtools
 
 RUN mkdir -p $HOME/rpmbuild/{RPMS,SRPMS,SOURCES,SPECS}
 
+COPY deplist.py /deplist.py
 COPY repos /repos
 COPY gpg /gpg
 
@@ -24,7 +25,7 @@ COPY source /root/rpmbuild/SOURCES
 #no way of knowing the difference between THAT and binary source files... Oh 
 #well. I will accept this inefficiency and carry on.
 
-CMD read rpmbuild_args && cat - > $HOME/rpmbuild/SPECS/rpm_preparse.spec && \
+CMD read rpmbuild_args && sed 's|%%|%%%%|g' > $HOME/rpmbuild/SPECS/rpm_preparse.spec && \
     #Read the first line of stdin into rpmbuild_args, and the rest goes into the spec file
     set -o pipefail && \
     #catch failing grep/seds... they shouldn't be, this helps with debug only, of course
@@ -38,23 +39,4 @@ CMD read rpmbuild_args && cat - > $HOME/rpmbuild/SPECS/rpm_preparse.spec && \
     #ask spectool which source/patch files are urls, and creating fake missing source files
     srpm_name=$(rpmbuild -bs [{RPMBUILD_ARGS}] $HOME/rpmbuild/SPECS/rpm.spec | \
           grep "^Wrote: " | sed 's/Wrote: \(.*\)/\1/') && \
-    srpm_name2=$(echo $srpm_name | sed 's|nosrc|src|') && \
-    #Thank you https://bugzilla.redhat.com/show_bug.cgi?id=1166126 :(
-    if [ "$srpm_name" != "$srpm_name2" ]; then \
-      mv $srpm_name $srpm_name2; \
-    fi && \
-    (yum-builddep --nogpgcheck --assumeno ${srpm_name2} || :)
-    #I still have no gpg here because... 1) SECUIRITY DOESN'T MATTER, I'm not
-    #installing here, and 2) with --assumeno it will not install the gpg certs,
-    #and fail. Rather then solving THAT problem, --nogpgcheck just makes sense
-    #here
-#Change this to yum deplist -q ${srpm_name} Returns zero on "Unsatisfies dependency"
-#Example
-#[computer rpmdocker]$ yum deplist srpms/caffe_local-2015.6.12-2.el7.src.rpm -q
-#package: caffe_local.src 2015.6.12-2.el7
-#  dependency: boost-devel >= 1.55
-#   Unsatisfied dependency
-#  dependency: cmake
-#   provider: cmake.x86_64 2.8.11-4.el7
-#  dependency: cudnn-devel
-#   Unsatisfied dependency
+    /deplist.py /deps.txt /local_deps.txt ${srpm_name}

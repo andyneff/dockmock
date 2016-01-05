@@ -185,6 +185,8 @@ class DockRpm(object):
 
     self.curl_script_path = os.path.join(self.spec_dir, 'curl.bsh')
     self.rpmmacros_path = os.path.join(self.spec_dir, 'rpmmacros')
+    self.depslist = os.path.join(self.spec_dir, 'deps.txt')
+    self.local_depslist = os.path.join(self.spec_dir, 'local_deps.txt')
 
     self.logger = logging.getLogger(__name__)
     self.log_level = (6-self.args.verbose)*10 #(10-60)
@@ -201,6 +203,8 @@ class DockRpm(object):
       self.specs_dir_docker = translate_path(self.specs_dir)
       self.source_dir_docker = translate_path(self.source_dir)
       self.code_dir_docker = translate_path(self.code_dir)
+      self.depslist_docker = translate_path(self.depslist)
+      self.local_depslist_docker = translate_path(self.local_depslist)
     else:
       self.rpm_dir_docker = self.rpm_dir
       self.srpm_dir_docker = self.srpm_dir
@@ -208,6 +212,8 @@ class DockRpm(object):
       self.source_dir_docker = self.source_dir
       self.specs_dir_docker = self.specs_dir
       self.code_dir_docker = self.code_dir
+      self.depslist_docker = self.depslist
+      self.local_depslist_docker = self.local_depslist
 
     if not os.path.exists(self.spec_dir):
       mkpath(self.spec_dir)
@@ -370,15 +376,26 @@ class DockRpm(object):
   def build_check_dependencies_image(self, image_name):
     ### Build Dep Check image
     self.logger.info('Building dependency checking docker')
+
+    shutil.copy(os.path.join(self.code_dir, 'deplist.py'), self.spec_dir)
+    #Copy code file
+
     cmd = ['docker', 'build', '-t', image_name, 
            '-f', self.dockerfile_dep_check, self.spec_dir]
     self.logger.debug(cmd_to_str(cmd))
     with PopenRedirect(LoggerFile(self.logger.debug)) as fid:
       Popen(cmd, stdout=fid.stdout, stderr=STDOUT).wait(0)
 
+    os.remove(os.path.join(self.spec_dir, 'deplist.py'))
+    #Clean up copy. No need for multiple of these
+
   def run_check_dependencies_image(self, image_name):
     ### Run Dep Check
     self.logger.info('Checking dependencies for %s' % self.spec_path)
+
+    #touch the files, make sure they exist
+    open(self.depslist, 'a').close()
+    open(self.local_depslist, 'a').close()
 
     try:
       #Run yum-builddep
@@ -388,28 +405,21 @@ class DockRpm(object):
       #plus the spec file 
 
       cmd = ['docker', 'run', '-i', '--rm',
-             '-v', '%s:/home/dev/rpmbuild/RPMS' % self.rpm_dir_docker,
-             '-v', '%s:/home/dev/rpmbuild/SRPMS' % self.srpm_dir_docker,
+             '-v', '%s:/home/dev/rpmbuild/RPMS:ro' % self.rpm_dir_docker,
              '-v', '%s:/source' % self.source_dir_docker,
+             '-v', '%s:/deps.txt' % self.depslist_docker,
+             '-v', '%s:/local_deps.txt' % self.local_depslist_docker,
              image_name]
       self.logger.debug(cmd_to_str(cmd))
-      pid = Popen(cmd, stdin=PIPE, stdout=PIPE)
+      pid = Popen(cmd, stdin=PIPE)
       #inject the --with/without/etc... options into the docker as the first line of stdin
 
-      stdout = pid.communicate(docker_input)[0]
+      pid.communicate(docker_input)[0]
       pid.wait(0)
       
-      dependencies = dependencies_from_yum_builddep(stdout)
-      dependencies.sort()
-      with open(os.path.join(self.spec_dir, 'deps.txt'), 'wb') as fid:
-        fid.write('\n'.join(dependencies))
-
       ###Scan for missing packages
-      missing_packages = []
-      error_message = 'Error: No Package found for '
-      for line in stdout.splitlines():
-        if line.startswith(error_message):
-          missing_packages.append(line[len(error_message):])
+      with open(self.local_depslist) as fid:
+        missing_packages = [package.strip() for package in fid.readlines()]
 
       ### Scan if local packages satisfy missing packages
       for missing_package in missing_packages:
@@ -448,7 +458,8 @@ class DockRpm(object):
 
     self.logger.info('Building other docker')
 
-    docker_env = {'USER_UID': str(self.uid), 'USER_GID': str(self.gid)}
+    docker_env = {'USER_UID': str(self.args.uid), 
+                  'USER_GID': str(self.args.gid)}
 
     self.dockerp(os.path.join(self.code_dir, 'Dockerfile_other'),
                  self.dockerfile_other,
@@ -542,8 +553,8 @@ class DockRpm(object):
           raise Exception('Unsupported version of CUDA %s' % cuda_version)
 
     docker_env['SPEC_BASENAME'] = self.spec_basename
-    docker_env['USER_UID'] = str(self.uid)
-    docker_env['USER_GID'] = str(self.gid)
+    docker_env['USER_UID'] = str(self.args.uid)
+    docker_env['USER_GID'] = str(self.args.gid)
     docker_env['RPMBUILD_ARGS'] = ' '.join(self.rpmbuild_args)
 
     #docker+ the Dockerfile
