@@ -27,6 +27,8 @@ COPY source /root/rpmbuild/SOURCES
 
 CMD read rpmbuild_args && sed 's|%%|%%%%|g' > $HOME/rpmbuild/SPECS/rpm_preparse.spec && \
     #Read the first line of stdin into rpmbuild_args, and the rest goes into the spec file
+    #%% need to be convered to %%% becuase rpmspec will unescape escaped characters. This
+    #reescapes them and hopefully NOTHING GOES WRONG! :-\
     set -o pipefail && \
     #catch failing grep/seds... they shouldn't be, this helps with debug only, of course
     rpmspec -D "debug_package %{nil}" -P $HOME/rpmbuild/SPECS/rpm_preparse.spec > $HOME/rpmbuild/SPECS/rpm.spec && \

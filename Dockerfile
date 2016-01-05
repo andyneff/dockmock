@@ -21,7 +21,8 @@ FROM centos:7
 #Make this a separate line because it's so common in many of my other dockers
 RUN yum groupinstall -y "Development Tools"
 
-RUN yum install -y spectool yum-utils createrepo sudo
+RUN yum install -y spectool yum-utils createrepo sudo which
+#Had to add which because the new Centos 7.2.1511 because it's missing for rpmbuild :(
 
 [{DOCKRPM_CUDA_INSTALL}]
 
