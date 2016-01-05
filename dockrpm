@@ -24,6 +24,9 @@ import argparse_dissect as argparse
 
 from vsi import PopenRedirect, LoggerFile
 
+class PopenWaitException(Exception):
+  pass
+
 class Popen(Popen_orig):
   def __init__(self, *args, **kwargs):
     if args:
@@ -36,7 +39,7 @@ class Popen(Popen_orig):
   def wait(self, desired_rv=None):
     rv = super(Popen, self).wait()
     if desired_rv is not None and desired_rv != rv:
-      raise Exception('Expected exit code %d but got %d for %s' % (desired_rv,
+      raise PopenWaitException('Expected exit code %d but got %d for %s' % (desired_rv,
                                                                    rv,
                                                                    self.cmd))
     return rv
@@ -178,7 +181,9 @@ class DockRpm(object):
     self.dockerfile = os.path.join(self.spec_dir, 'Dockerfile_build')
     self.dockerfile_dep_check = os.path.join(self.spec_dir, 
                                              'Dockerfile_dep_check')
-    self.dockerfile_other = os.path.join(self.spec_dir, 
+    
+    self.dockerfile_other_dir = os.path.join(self.code_dir, 'other')
+    self.dockerfile_other = os.path.join(self.dockerfile_other_dir,
                                              'Dockerfile_other')
     self.dockerfile_other_built = False
     self.dockerfile_other_imagename = 'dockrpm_other_{}_{}'
@@ -228,7 +233,7 @@ class DockRpm(object):
     
   def search_local(self, package_info, package_name_suffix='_local'):
     cmd = ['python', '/search_local.py'] + package_info
-    docker_args = ['-v', '%s:/specs:ro' % self.specs_dir_docker,
+    docker_args = ['-v', '%s:/specs' % self.specs_dir_docker,
                    '-v', '%s:/search_local.py' % posixpath.join(self.code_dir_docker, 'search_local.py')]
     pid = self.run_other_piped(cmd, docker_args)
     return pid.communicate()[0].strip()
@@ -436,7 +441,7 @@ class DockRpm(object):
           DockRpm(dep_args).main(setup_logging=False)
         else:
           raise Exception('No match for package %s' % missing_package)
-    except:
+    except PopenWaitException:
       self.logger.critical('Error running dep_check. To run the docker, try:')
       self.logger.info('(echo %s; cat %s ) | %s' % \
             (cmd_to_str(self.rpmbuild_args), self.spec_path, 
@@ -467,12 +472,13 @@ class DockRpm(object):
     docker_env = {'USER_UID': str(self.args.uid), 
                   'USER_GID': str(self.args.gid)}
 
+    mkpath(self.dockerfile_other_dir)
     self.dockerp(os.path.join(self.code_dir, 'Dockerfile_other'),
                  self.dockerfile_other,
                  docker_env)
 
     cmd = ['docker', 'build', '-t', self.dockerfile_other_imagename, 
-           '-f', self.dockerfile_other, self.spec_dir]
+           '-f', self.dockerfile_other, self.dockerfile_other_dir]
     self.logger.debug(cmd_to_str(cmd))
     with PopenRedirect(LoggerFile(self.logger.debug)) as fid:
       Popen(cmd, stdout=fid.stdout, stderr=STDOUT).wait(0)
