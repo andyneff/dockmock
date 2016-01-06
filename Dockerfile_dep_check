@@ -32,7 +32,7 @@ CMD sed 's|%%|%%%%|g' > $HOME/rpmbuild/SPECS/rpm_preparse.spec && \
     #reescapes them and hopefully NOTHING GOES WRONG! :-\
     set -o pipefail && \
     #catch failing grep/seds... they shouldn't be, this helps with debug only, of course
-    eval "RPMBUILD_ARGS=(${RPMBUILD_ARGS})" && \
+    eval RPMBUILD_ARGS=(${RPMBUILD_ARGS}) && \
     rpmspec "${RPMBUILD_ARGS[@]}" -D "debug_package %{nil}" -P $HOME/rpmbuild/SPECS/rpm_preparse.spec > $HOME/rpmbuild/SPECS/rpm.spec && \
     #parse the spec file, debug_package must be disabled or else two debug packages will be made, and fail
     spectool -g -n -A -C $HOME/rpmbuild/SOURCES $HOME/rpmbuild/SPECS/rpm.spec | \

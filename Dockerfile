@@ -76,23 +76,23 @@ COPY [{SPEC_BASENAME}] /home/dev/rpmbuild/SPECS/
 
 CMD if [ "${DOCKRPM_DEBUG}" == "0" ]; then \
       sudo yum clean --disablerepo=* --enablerepo=rpmdocker metadata && \
+      eval RPMBUILD_ARGS=(${RPMBUILD_ARGS}) && \
       srpm_name=$(rpmbuild -bs /home/dev/rpmbuild/SPECS/[{SPEC_BASENAME}] \
-          -D "_srcrpmdir /tmp" [{RPMBUILD_ARGS}] | \grep "^Wrote: " | \
+          -D "_srcrpmdir /tmp" "${RPMBUILD_ARGS[@]}" | \grep "^Wrote: " | \
           sed 's/Wrote: \(.*\)/\1/') && \
       srpm_name2=$(echo $srpm_name | sed 's|nosrc|src|') && \
       if [ "$srpm_name" != "$srpm_name2" ]; then \
         mv $srpm_name $srpm_name2; \
       fi && \
-      #srpm_name=$(rpmbuild -bs /home/dev/rpmbuild/SPECS/[{SPEC_BASENAME}] [{RPMBUILD_ARGS}] | \grep "^Wrote: " | sed 's/Wrote: \(.*\)/\1/') && \
       #Thank you https://bugzilla.redhat.com/show_bug.cgi?id=1166126 :(
       sudo yum-builddep -y ${srpm_name2} ; \
     fi && \
     if [ "${DOCKRPM_BASH}" == "1" ]; then \
       echo "When you are ready, run:" && \
-      echo "rpmbuild -ba /home/dev/rpmbuild/SPECS/[{SPEC_BASENAME}]" && \
+      echo "rpmbuild -ba ${RPMBUILD_ARGS[@]} /home/dev/rpmbuild/SPECS/[{SPEC_BASENAME}]" && \
       bash; \
     else \
-      rpmbuild -ba /home/dev/rpmbuild/SPECS/[{SPEC_BASENAME}] && \
+      rpmbuild -ba "${RPMBUILD_ARGS[@]}" /home/dev/rpmbuild/SPECS/[{SPEC_BASENAME}] && \
       createrepo ~/rpmbuild/RPMS -o /tmp && \
       rm -rvf ~/rpmbuild/RPMS/repodata && \
       mv /tmp/repodata ~/rpmbuild/RPMS/ && \
