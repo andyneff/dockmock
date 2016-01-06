@@ -6,6 +6,7 @@ from subprocess import Popen, PIPE
 import shutil
 from distutils.dir_util import mkpath
 import argparse
+from distutils.version import LooseVersion
 
 def test_version(version1, version2, test):
   try:
@@ -73,7 +74,7 @@ def search_local(package_name, version_test=None, version=None, specs_dir='/spec
         if version_test is None:
           return os.path.relpath(spec, specs_dir)
         else:
-          if test_version(rpm_name[1], package_version, package_test):
+          if test_version(rpm_name[1], version, version_test):
             return os.path.relpath(spec, specs_dir)
 
 if __name__=='__main__':
