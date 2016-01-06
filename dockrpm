@@ -437,7 +437,8 @@ class DockRpm(object):
           fid = None
 
         self.logger.debug(cmd_to_str(cmd))
-        Popen(cmd, stdin=fid).wait(0)
+        with PopenRedirect(LoggerFile(self.logger.debug)) as fid_log:
+          Popen(cmd, stdout=fid_log.stdout, stderr=STDOUT, stdin=fid).wait(0)
       
       ###Scan for missing packages
       with open(self.local_depslist) as fid:
