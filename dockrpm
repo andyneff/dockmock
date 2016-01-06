@@ -240,9 +240,15 @@ class DockRpm(object):
 
     
   def search_local(self, package_info, package_name_suffix='_local'):
-    cmd = ['python', '/search_local.py'] + package_info
+    cmd = ['python', '/search_local.py']
+    if len(package_info) == 1:
+      cmd.append(package_info[0])
+    else:
+      cmd.extend([package_info[0], '-t', package_info[1], '-v', package_info[2]])
+    cmd.extend(withs_to_defines(getattr(self.args, 'with'), self.args.without))
+
     docker_args = ['-v', '%s:/specs' % self.specs_dir_docker,
-                   '-v', '%s:/search_local.py' % posixpath.join(self.code_dir_docker, 'search_local.py')]
+                   '-v', '%s:/search_local.py:ro' % posixpath.join(self.code_dir_docker, 'search_local.py')]
     pid = self.run_other_piped(cmd, docker_args)
     return pid.communicate()[0].strip()
 
@@ -368,7 +374,6 @@ class DockRpm(object):
       copy_tree(self.args.mount_repo, self.repo_dir)
     if self.args.mount_gpg:
       copy_tree(self.args.mount_gpg, self.gpg_dir)
-    print self.args
 
     if os.path.exists(self.common_inc):
       shutil.copy(self.common_inc, self.source_dir)
@@ -428,7 +433,8 @@ class DockRpm(object):
           cmd = cmd[:-1] + \
                 ['-t', '-v', '%s:/home/dev/rpmbuild/SPECS/rpm_orig.spec' % \
                              (self.spec_path_docker),
-                 '-e', 'DOCKRPM_BASH=1'] + cmd[-1:]
+                 '-e', 'DOCKRPM_BASH=1'] + cmd[-1:] + ['bash']
+          fid = None
 
         self.logger.debug(cmd_to_str(cmd))
         Popen(cmd, stdin=fid).wait(0)
@@ -581,7 +587,6 @@ class DockRpm(object):
     docker_env['SPEC_BASENAME'] = self.spec_basename
     docker_env['USER_UID'] = str(self.args.uid)
     docker_env['USER_GID'] = str(self.args.gid)
-    docker_env['RPMBUILD_ARGS'] = ' '.join(self.rpmbuild_args)
 
     #docker+ the Dockerfile
     self.dockerp(os.path.join(self.code_dir, 'Dockerfile'), self.dockerfile,
@@ -650,6 +655,7 @@ class DockRpm(object):
     cmd = ['docker', 'run', '-i', 
            '-v', '%s:/home/dev/rpmbuild/RPMS' % self.rpm_dir_docker,
            '-v', '%s:/home/dev/rpmbuild/SRPMS' % self.srpm_dir_docker,
+           '-e', 'RPMBUILD_ARGS=%s' % cmd_to_str(self.rpmbuild_args),
            '--name', container_name] + docker_options + self.extra_args + \
            [image_name]
     self.logger.debug(cmd_to_str(cmd))
