@@ -4,6 +4,8 @@ FIX_DEP_ARG = --assumeno
 
 ARGS = --debug-on-fail=false
 
+ENABLE_REPO = 1
+
 SPECS = $(wildcard specs/*/*.spec)
 PHONY_TARGETS = all install clean rpmdocker.repo cache purge repos check_dep fix_dep build
 
@@ -45,7 +47,7 @@ rpmdocker.repo:
 	echo "name=rpmdocker" >> rpmdocker.repo
 	echo "baseurl=file://`pwd`/rpms" >> rpmdocker.repo
 	echo "gpgcheck=0" >> rpmdocker.repo
-	echo "enabled=0" >> rpmdocker.repo
+	echo "enabled=$(ENABLE_REPO)" >> rpmdocker.repo
 	echo "metadata_expire=0" >> rpmdocker.repo
 	echo "metadata_expire_filter=never" >> rpmdocker.repo
 
