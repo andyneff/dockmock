@@ -125,6 +125,14 @@ def translate_path(ntpath):
   path = os.path.splitdrive(ntpath)
   return posixpath.join('/', path[0].strip(':').lower(), *path[1].lstrip('\\').split('\\'))
 
+def withs_to_defines(withs=[], withouts=[]):
+  with_args = []
+  for w in withs:
+    with_args.extend(['-D', '_with_%s 1' % w])
+  for w in withouts:
+    with_args.extend(['-D', '_without_%s 1' % w])
+  return with_args
+
 class DockRpm(object):
   SPEC_DIR='specs'
   RPM_DIR='rpms'
@@ -346,20 +354,21 @@ class DockRpm(object):
 
     if self.args.mount_repo is None:
       if os.name=='nt':
-        self.mount_repo = self.repo_dir #null case really
+        self.args.mount_repo = self.repo_dir #null case really
       else:
-        self.mount_repo = '/etc/yum.repos.d'
+        self.args.mount_repo = '/etc/yum.repos.d'
 
     if self.args.mount_gpg is None:
       if os.name=='nt':
-        self.mount_repo = self.gpg_dir #null case really
+        self.args.mount_gpg = self.gpg_dir #null case really
       else:
-        self.mount_gpg = '/etc/pki/rpm-gpg'
+        self.args.mount_gpg = '/etc/pki/rpm-gpg'
 
     if self.args.mount_repo:
       copy_tree(self.args.mount_repo, self.repo_dir)
     if self.args.mount_gpg:
       copy_tree(self.args.mount_gpg, self.gpg_dir)
+    print self.args
 
     if os.path.exists(self.common_inc):
       shutil.copy(self.common_inc, self.source_dir)
@@ -367,8 +376,7 @@ class DockRpm(object):
     
     self.dockerp(os.path.join(self.code_dir, 'Dockerfile_dep_check'),
                  self.dockerfile_dep_check,
-                 {'CLEAR_CACHE':str(datetime.date.today().toordinal()/5),
-                  'RPMBUILD_ARGS':' '.join(self.rpmbuild_args)})
+                 {'CLEAR_CACHE':str(datetime.date.today().toordinal()/5)})
     #Clear the yum cache every 5 days, this forces docker to create a new image
 
     # Prep repo
@@ -405,22 +413,25 @@ class DockRpm(object):
     try:
       #Run yum-builddep
       with open(self.spec_path, 'r') as fid:
-        docker_input = ' '.join(self.rpmbuild_args)+'\n' + fid.read()
-      #The input to this docker is a line of rpmbuild args (--with/out, etc)
-      #plus the spec file 
+        #The input to this docker is the spec file 
 
-      cmd = ['docker', 'run', '-i', '--rm',
-             '-v', '%s:/home/dev/rpmbuild/RPMS:ro' % self.rpm_dir_docker,
-             '-v', '%s:/source' % self.source_dir_docker,
-             '-v', '%s:/deps.txt' % self.depslist_docker,
-             '-v', '%s:/local_deps.txt' % self.local_depslist_docker,
-             image_name]
-      self.logger.debug(cmd_to_str(cmd))
-      pid = Popen(cmd, stdin=PIPE)
-      #inject the --with/without/etc... options into the docker as the first line of stdin
+        cmd = ['docker', 'run', '-i', '--rm',
+               '-v', '%s:/home/dev/rpmbuild/RPMS:ro' % self.rpm_dir_docker,
+               '-v', '%s:/source' % self.source_dir_docker,
+               '-v', '%s:/deps.txt' % self.depslist_docker,
+               '-v', '%s:/local_deps.txt' % self.local_depslist_docker,
+               '-e', 'RPMBUILD_ARGS=%s' % cmd_to_str(withs_to_defines(getattr(self.args, 'with'), self.args.without)),
+               image_name]
 
-      pid.communicate(docker_input)[0]
-      pid.wait(0)
+        if self.args.bash:
+          #if interactive bash session then I want tty hooked up and SPEC file synced
+          cmd = cmd[:-1] + \
+                ['-t', '-v', '%s:/home/dev/rpmbuild/SPECS/rpm_orig.spec' % \
+                             (self.spec_path_docker),
+                 '-e', 'DOCKRPM_BASH=1'] + cmd[-1:]
+
+        self.logger.debug(cmd_to_str(cmd))
+        Popen(cmd, stdin=fid).wait(0)
       
       ###Scan for missing packages
       with open(self.local_depslist) as fid:
@@ -496,14 +507,11 @@ class DockRpm(object):
 
   def run_spectool(self, withs=[], withouts=[]):
     self.build_other_image()
-    with_args = []
-    for w in withs:
-      with_args.append('-D "_with_%s 1"')
-    for w in withouts:
-      with_args.append('-D "_without_%s 1"')
-    with_args = ' '.join(with_args)
 
-    cmd = ['docker', 'run', '-i', '-e', 'SPECTOOL=1', '-e', with_args,
+    with_args = cmd_to_str(withs_to_defines(withs, withouts))
+    
+    cmd = ['docker', 'run', '-i', '-e', 'SPECTOOL=1', 
+           '-e', 'WITH_ARGS=%s' % with_args,
            '-v', '%s:/home/dev/rpmbuild/SOURCES:ro' % self.source_dir_docker,
            self.dockerfile_other_imagename]
     self.logger.debug(cmd_to_str(cmd))
@@ -525,9 +533,8 @@ class DockRpm(object):
     return Popen(cmd, stdin=PIPE, stdout=PIPE, stderr=PIPE)
 
   def check_dependencies(self):
-    
     image_name = 'dockrpm_%s_dep_check' % self.spec_name
-    
+
     if not self.args.skip_build:
       self.build_check_dependencies_image(image_name)
 
@@ -561,13 +568,13 @@ class DockRpm(object):
           docker_env['DOCKRPM_CUDA_INSTALL'] = 'RUN yum install -y ' \
               'http://developer.download.nvidia.com/compute/cuda/repos/rhel7/' \
               'x86_64/cuda-repo-rhel7-7.5-18.x86_64.rpm epel-release && ' \
-              'yum install -y cuda.%d-%d' % cuda_version.version[0:2]
+              'yum install -y cuda-%d-%d' % cuda_version.version[0:2]
 
         elif cuda_version >= StrictVersion('5.5'): #not 100% sure this works in rhel 7 ;)
           docker_env['DOCKRPM_CUDA_INSTALL'] = 'RUN yum install -y ' \
               'http://developer.download.nvidia.com/compute/cuda/repos/rhel6/' \
               'x86_64/cuda-repo-rhel6-7.5-18.x86_64.rpm epel-release && ' \
-              'yum install -y cuda.%d-%d' % cuda_version.version[0:2]
+              'yum install -y cuda-%d-%d' % cuda_version.version[0:2]
         else:
           raise Exception('Unsupported version of CUDA %s' % cuda_version)
 

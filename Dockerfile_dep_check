@@ -26,13 +26,14 @@ COPY source /root/rpmbuild/SOURCES
 
 COPY deplist.py /deplist.py
 
-CMD read rpmbuild_args && sed 's|%%|%%%%|g' > $HOME/rpmbuild/SPECS/rpm_preparse.spec && \
+CMD sed 's|%%|%%%%|g' > $HOME/rpmbuild/SPECS/rpm_preparse.spec && \
     #Read the first line of stdin into rpmbuild_args, and the rest goes into the spec file
     #%% need to be convered to %%% becuase rpmspec will unescape escaped characters. This
     #reescapes them and hopefully NOTHING GOES WRONG! :-\
     set -o pipefail && \
     #catch failing grep/seds... they shouldn't be, this helps with debug only, of course
-    rpmspec -D "debug_package %{nil}" -P $HOME/rpmbuild/SPECS/rpm_preparse.spec > $HOME/rpmbuild/SPECS/rpm.spec && \
+    eval "RPMBUILD_ARGS=(${RPMBUILD_ARGS})" && \
+    rpmspec "${RPMBUILD_ARGS[@]}" -D "debug_package %{nil}" -P $HOME/rpmbuild/SPECS/rpm_preparse.spec > $HOME/rpmbuild/SPECS/rpm.spec && \
     #parse the spec file, debug_package must be disabled or else two debug packages will be made, and fail
     spectool -g -n -A -C $HOME/rpmbuild/SOURCES $HOME/rpmbuild/SPECS/rpm.spec | \
       ( grep '^Getting' || : ) | sed 's/.* to \(.*\)/\1/' | \
@@ -40,6 +41,7 @@ CMD read rpmbuild_args && sed 's|%%|%%%%|g' > $HOME/rpmbuild/SPECS/rpm_preparse.
           truncate -s 20 "${filename}"; \
         done && \
     #ask spectool which source/patch files are urls, and creating fake missing source files
-    srpm_name=$(rpmbuild -bs [{RPMBUILD_ARGS}] $HOME/rpmbuild/SPECS/rpm.spec | \
+    srpm_name=$(rpmbuild -bs $HOME/rpmbuild/SPECS/rpm.spec | \
           grep "^Wrote: " | sed 's/Wrote: \(.*\)/\1/') && \
-    /deplist.py /deps.txt /local_deps.txt ${srpm_name}
+    /deplist.py /deps.txt /local_deps.txt ${srpm_name} && \
+    if [ "${DOCKRPM_BASH}" == "1" ]; then bash; fi
