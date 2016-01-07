@@ -22,8 +22,11 @@ CMD if [ "${CREATEREPO}" == "1" ]; then\
     fi && \
     if [ "${SPECTOOL}" == "1" ]; then \
       ls -la /dev && \
+      id && \
       eval WITH_ARGS=($WITH_ARGS) && \
+      echo 111 && \
       cat - > /test.spec && \
+      echo 222 && \
       rpmspec -P /test.spec "${WITH_ARGS[@]}" | \
       spectool -g -n -A -; \
     fi
