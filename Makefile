@@ -84,8 +84,6 @@ fix_dep:
 	done < <(yum remove -q --assumeno $$(yumdb search from_repo rpmdocker | \grep '^\w' | \grep -v "Loaded plugins") 2>&1 | \grep '^ \w' | head -n -1 | tail -n +2)
 
 test:
-	docker version
-	ls -la /dev/
 	./dockrpm $(ARGS) ninja
 	./dockrpm $(ARGS) caffe --without cudnn
 	./dockrpm $(ARGS) potree-converter
