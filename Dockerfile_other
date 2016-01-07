@@ -21,14 +21,8 @@ CMD if [ "${CREATEREPO}" == "1" ]; then\
       mv /tmp/repodata ~/rpmbuild/SRPMS/; \
     fi && \
     if [ "${SPECTOOL}" == "1" ]; then \
-      ls -la /dev >&2 && \
-      id >&2 && \
       eval WITH_ARGS=($WITH_ARGS) && \
-      echo 000 >&2 && \
-      touch /tmp/test.spec && \
-      echo 111 >&2 && \
       cat - > /tmp/test.spec && \
-      echo 222 >&2 && \
       rpmspec -P /tmp/test.spec "${WITH_ARGS[@]}" | \
       spectool -g -n -A -; \
     fi
