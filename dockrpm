@@ -375,9 +375,12 @@ class DockRpm(object):
     if self.args.mount_gpg:
       copy_tree(self.args.mount_gpg, self.gpg_dir)
 
-    if os.path.exists(self.common_inc):
+    if os.path.exists(self.common_inc) and \
+       not os.path.exists(os.path.join(self.source_dir, 
+                                       os.path.basename(self.common_inc))):
       shutil.copy(self.common_inc, self.source_dir)
-      #should this always overwrite? or never? or something inbetween?
+      #should this always overwrite? or never? or something inbetween? I choose
+      #never by default. 
     
     self.dockerp(os.path.join(self.code_dir, 'Dockerfile_dep_check'),
                  self.dockerfile_dep_check,
@@ -455,7 +458,8 @@ class DockRpm(object):
           #arg list instead
           match_spec_path = os.path.join(self.specs_dir, match)
           dep_args = [match_spec_path] + argparse.filter_args(self.args, None, 
-                                                    ['spec', 'with', 'without'])
+                                                    ['spec'])
+          self.logger.debug('Calling DockRpm with args: %s' % str(dep_args))
           DockRpm(dep_args).main(setup_logging=False)
         else:
           raise Exception('No match for package %s' % missing_package)
@@ -504,7 +508,7 @@ class DockRpm(object):
 
   def run_create_repo(self):
     self.build_other_image()
-    cmd = ['docker', 'run', '-e', 'CREATEREPO=1',
+    cmd = ['docker', 'run', '--rm', '-e', 'CREATEREPO=1',
            '-v', '%s:/home/dev/rpmbuild/RPMS' % self.rpm_dir_docker,
            '-v', '%s:/home/dev/rpmbuild/SRPMS' % self.srpm_dir_docker,
            self.dockerfile_other_imagename]
@@ -517,7 +521,7 @@ class DockRpm(object):
 
     with_args = cmd_to_str(withs_to_defines(withs, withouts))
     
-    cmd = ['docker', 'run', '-i', '-e', 'SPECTOOL=1', 
+    cmd = ['docker', 'run', '-i', '--rm', '-e', 'SPECTOOL=1', 
            '-e', 'WITH_ARGS=%s' % with_args,
            '-v', '%s:/home/dev/rpmbuild/SOURCES:ro' % self.source_dir_docker,
            self.dockerfile_other_imagename]
@@ -526,7 +530,7 @@ class DockRpm(object):
 
   def run_other(self, cmd, docker_args=[]):
     self.build_other_image()
-    cmd = ['docker', 'run'] + docker_args + \
+    cmd = ['docker', 'run', '--rm'] + docker_args + \
           [self.dockerfile_other_imagename] + cmd
     self.logger.debug(cmd_to_str(cmd))
     with PopenRedirect(LoggerFile(self.logger.debug)) as fid:
