@@ -517,6 +517,7 @@ class DockRpm(object):
       Popen(cmd, stdout=fid.stdout, stderr=STDOUT).wait(0)
 
   def run_spectool(self, withs=[], withouts=[]):
+    Popen(['ls', '/dev', '-la']).wait()
     self.build_other_image()
 
     with_args = cmd_to_str(withs_to_defines(withs, withouts))
