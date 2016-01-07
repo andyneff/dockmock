@@ -1,4 +1,4 @@
-# RPM Building in Dockers #
+# RPM Building in Dockers # [![Build Status](https://travis-ci.org/andyneff/dockrpm.svg?branch=master)](https://travis-ci.org/andyneff/dockrpm)
 
 This package accomplishes three tasks
 
