@@ -8,6 +8,6 @@ before_install:
 - git clone https://bitbucket.org/andyneff/rpm_specs.git specs
 
 script:
-- make ninja
-- make caffe --without cudnn
-- make potree-converter
+- make ninja OTHER_ARGS='--debug-on-fail=false --mount-repo= --mount-gpg='
+- make caffe OTHER_ARGS='--debug-on-fail=false --mount-repo= --mount-gpg= --without cudnn'
+- make potree-converter OTHER_ARGS='--debug-on-fail=false --mount-repo= --mount-gpg='
