@@ -90,25 +90,23 @@ def filter_args(namespace, args=None, exclude=[]):
                                     namespace._ordered_args_option_strings,
                                     namespace._ordered_args_values):
     
+    args_length = 0
+
     if not isinstance(values, (list, tuple, set)):
       values = [values]
     #canonicalize
 
-    if arg_name in exclude:
-      index += len(flag)
-      index += len(values)
-      continue
+    if flag and '=' in args[index]:
+      args_length -= 1
+    #Fix index error when argument is --foo=bar instead of --foo bar. This 
+    #should not be tricked by --foo=bar=zoo or --foo bar=zoo. Also if it is an
+    #positional argument(if flag), don't check.
 
-    #filtered_args2.extend(flag)
-    #if isinstance(values, list):
-    #  filtered_args2.extend(values)
-    #else:
-    #  filtered_args2.append(values)
+    args_length += len(flag)
+    args_length += len(values)
 
-    filtered_args.extend(args[index:index+len(flag)])
-    index += len(flag)
-
-    filtered_args.extend(args[index:index+len(values)])
-    index += len(values)
+    if arg_name not in exclude:
+      filtered_args.extend(args[index:index+args_length])
+    index += args_length
 
   return filtered_args

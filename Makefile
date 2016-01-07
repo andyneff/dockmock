@@ -2,7 +2,7 @@ SHELL := /usr/bin/env bash
 
 FIX_DEP_ARG = --assumeno
 
-ARGS = --debug-on-fail false
+ARGS = --debug-on-fail=false
 
 ENABLE_REPO = 1
 
