@@ -1,13 +1,16 @@
 sudo: required
 
+language: python
+
+python: 
+- "2.7"
+
 services:
-  - docker
+- docker
 
 before_install:
 - docker pull centos:7
 - git clone https://bitbucket.org/andyneff/rpm_specs.git specs
 
 script:
-- make ninja OTHER_ARGS='--debug-on-fail=false --mount-repo= --mount-gpg='
-- make caffe OTHER_ARGS='--debug-on-fail=false --mount-repo= --mount-gpg= --without cudnn'
-- make potree-converter OTHER_ARGS='--debug-on-fail=false --mount-repo= --mount-gpg='
+- make test ARGS='--debug-on-fail=false --mount-repo= --mount-gpg='
